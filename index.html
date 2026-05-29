@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Smart Water Tank — Premium IoT Panel</title>
+  
+  <!-- Premium Typography -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=SF+Pro+Display:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  
+  <!-- CDNs for MQTT & Charts -->
+  <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+  <!-- External Stylesheet -->
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- Background Ambient Glows -->
+  <div class="ambient-glow bg-glow-1"></div>
+  <div class="ambient-glow bg-glow-2"></div>
+
+  <!-- Header -->
+  <header class="app-header">
+    <div class="header-logo">
+      <svg class="logo-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
+      </svg>
+      <div class="logo-text">
+        <h1>AQUAFSM</h1>
+        <span>PRO IOT PANEL</span>
+      </div>
+    </div>
+    
+    <div class="header-status">
+      <div id="connection-status-pill" class="status-pill disconnected">
+        <span class="status-dot"></span>
+        <span id="connection-status-text">Disconnected</span>
+      </div>
+      
+      <button id="settings-toggle-btn" class="icon-btn" aria-label="Toggle connection settings">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+        </svg>
+      </button>
+
+      <button id="alerts-toggle-btn" class="icon-btn notification-btn" aria-label="Toggle alerts drawer">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 0 1-3.46 0"/>
+        </svg>
+        <span id="notification-badge" class="badge hidden">0</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- Collapsible Broker Settings Panel -->
+  <section id="settings-panel" class="settings-drawer collapsed">
+    <div class="drawer-header">
+      <h2>HIVEMQ CLOUD CONNECTION</h2>
+      <p>Configure your IoT MQTT WebSocket parameters below. Settings persist in local storage.</p>
+    </div>
+    <form id="connection-form">
+      <div class="form-grid">
+        <div class="input-group">
+          <label for="mqtt-host">Broker Host Address</label>
+          <input type="text" id="mqtt-host" required placeholder="3356a8cf8c9943d183bec9e288fc9d4c.s1.eu.hivemq.cloud">
+        </div>
+        <div class="input-row">
+          <div class="input-group half">
+            <label for="mqtt-port">WSS Port</label>
+            <input type="number" id="mqtt-port" required placeholder="8884">
+          </div>
+          <div class="input-group half">
+            <label for="mqtt-path">WebSocket Path</label>
+            <input type="text" id="mqtt-path" required placeholder="/mqtt">
+          </div>
+        </div>
+        <div class="input-group">
+          <label for="mqtt-user">Username</label>
+          <input type="text" id="mqtt-user" required placeholder="spider.home">
+        </div>
+        <div class="input-group">
+          <label for="mqtt-pass">Password</label>
+          <div class="password-wrapper">
+            <input type="password" id="mqtt-pass" required placeholder="••••••••••••••">
+            <button type="button" id="toggle-password-btn" class="password-toggle">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="eye-open">
+                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                <circle cx="12" cy="12" r="3"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+        <div class="input-group">
+          <label for="mqtt-client-id">Client Identifier</label>
+          <input type="text" id="mqtt-client-id" required placeholder="aquafsm-web-panel">
+        </div>
+      </div>
+      <div class="form-actions">
+        <button type="button" id="reset-defaults-btn" class="btn secondary">Reset Defaults</button>
+        <button type="submit" id="connect-btn" class="btn primary">Connect Dashboard</button>
+      </div>
+    </form>
+  </section>
+
+  <!-- Main Container -->
+  <main class="dashboard-container">
+    
+    <!-- Left Column: Primary HUD Display & Control -->
+    <div class="dashboard-column primary-column">
+      
+      <!-- Liquid Circular Level Gauge Card -->
+      <div class="glass-card main-gauge-card">
+        <div class="card-glow"></div>
+        <div class="gauge-wrapper">
+          <!-- Fluid SVG Ring & Wave Mask -->
+          <svg class="circular-svg" viewBox="0 0 200 200">
+            <!-- Background Ring Shadow -->
+            <circle cx="100" cy="100" r="85" class="ring-bg"></circle>
+            <!-- Glowing Inner Path -->
+            <circle cx="100" cy="100" r="85" class="ring-fill-glow"></circle>
+            <circle cx="100" cy="100" r="85" id="ring-progress-bar" class="ring-fill" stroke-dasharray="534" stroke-dashoffset="534"></circle>
+            
+            <!-- Clipping Mask for Wave -->
+            <defs>
+              <clipPath id="circle-clip">
+                <circle cx="100" cy="100" r="76" />
+              </clipPath>
+            </defs>
+            
+            <!-- Wave Graphic Container clipped into a perfect circle -->
+            <g clip-path="url(#circle-clip)">
+              <rect x="0" y="0" width="200" height="200" class="gauge-fluid-bg" />
+              <!-- Waves with CSS Animated Sliders -->
+              <path id="wave-back" class="wave wave-back" d="M 0 100 Q 50 85 100 100 T 200 100 L 200 200 L 0 200 Z"></path>
+              <path id="wave-front" class="wave wave-front" d="M 0 100 Q 50 115 100 100 T 200 100 L 200 200 L 0 200 Z"></path>
+            </g>
+          </svg>
+
+          <!-- Inside Text Readout -->
+          <div class="gauge-readout">
+            <span id="level-percentage" class="percentage-val">--%</span>
+            <span class="percentage-lbl">WATER LEVEL</span>
+            <span id="volume-readout" class="volume-val">-- Litres</span>
+          </div>
+
+          <!-- Pumping Activity Overlay Robot -->
+          <div id="gauge-robot-anim" class="robot-animation hidden">
+            <div class="pulsing-wave-icon">
+              <span></span><span></span><span></span>
+            </div>
+          </div>
+        </div>
+
+        <div class="gauge-meta">
+          <div class="meta-item">
+            <span class="meta-label">learned fill rate</span>
+            <span id="learned-lpm-val" class="meta-value">-- LPM</span>
+          </div>
+          <div class="divider"></div>
+          <div class="meta-item">
+            <span class="meta-label">estimated time to full</span>
+            <span id="fill-eta-val" class="meta-value">-- min</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Pump & System Mode Controls Card -->
+      <div class="glass-card controls-card">
+        <h2>SYSTEM STATE CONTROLS</h2>
+        
+        <div class="control-grid">
+          <!-- Mode Pill Selector -->
+          <div class="mode-selector-wrapper">
+            <span class="control-label">Operation Mode</span>
+            <div class="mode-pills">
+              <button id="mode-auto-btn" class="pill-btn" onclick="publishMode('AUTO')">AUTO</button>
+              <button id="mode-manual-btn" class="pill-btn" onclick="publishMode('MANUAL')">MANUAL</button>
+              <button id="mode-maint-btn" class="pill-btn" onclick="publishMode('MAINTENANCE')">MAINT</button>
+            </div>
+          </div>
+
+          <!-- Tactile Pump Slider -->
+          <div class="switch-selector-wrapper">
+            <span class="control-label">Manual Pump Control</span>
+            <div class="pump-switch-container">
+              <button id="pump-toggle-btn" class="apple-switch" aria-label="Toggle water pump manual trigger">
+                <span class="switch-handle"></span>
+              </button>
+              <span id="pump-state-label" class="pump-lbl-stopped">STOPPED</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Secondary Diagnostics Actions -->
+        <div class="control-actions">
+          <button id="reset-usage-btn" class="btn text-btn">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
+              <path d="M3 3v5h5"/>
+            </svg>
+            Reset Usage Data
+          </button>
+          
+          <button id="clear-alerts-btn" class="btn text-btn warning-text">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M18 6 6 18M6 6l12 12"/>
+            </svg>
+            Clear Active Alerts
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Right Column: Secondary Metrics & Historical Analytics -->
+    <div class="dashboard-column secondary-column">
+      
+      <!-- Premium Metrics Grid -->
+      <div class="metrics-grid">
+        <!-- AC Voltage monitor card -->
+        <div class="glass-card metric-card" id="voltage-card">
+          <div class="metric-header">
+            <span class="metric-title">AC Line Voltage</span>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="metric-icon bolt-icon">
+              <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
+            </svg>
+          </div>
+          <div class="metric-body">
+            <span id="voltage-val" class="metric-number">--V</span>
+            <span id="voltage-status-pill" class="pill normal">Safe Range</span>
+          </div>
+          <p class="metric-footer">Limits: 180V - 250V AC safety cutoff</p>
+        </div>
+
+        <!-- Daily Water consumption card -->
+        <div class="glass-card metric-card">
+          <div class="metric-header">
+            <span class="metric-title">Daily Litres Pumped</span>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="metric-icon">
+              <path d="M12 22a7 7 0 0 0 7-7c0-4.3-7-11-7-11S5 10.7 5 15a7 7 0 0 0 7 7z"/>
+            </svg>
+          </div>
+          <div class="metric-body">
+            <span id="daily-usage-val" class="metric-number">-- L</span>
+            <span class="pill usage-pill">Today</span>
+          </div>
+          <p class="metric-footer">Saves dynamically to controller EEPROM</p>
+        </div>
+
+        <!-- Leak analysis diagnostic card -->
+        <div class="glass-card metric-card" id="leak-card">
+          <div class="metric-header">
+            <span class="metric-title">Leak Diagnostics</span>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="metric-icon alert-icon">
+              <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+            </svg>
+          </div>
+          <div class="metric-body">
+            <span id="leak-status-val" class="metric-number">SECURE</span>
+            <span id="leak-score-badge" class="pill secure">Score: 0/6</span>
+          </div>
+          <p class="metric-footer" id="leak-footer">Evaluates slope & rate continuously</p>
+        </div>
+      </div>
+
+      <!-- Graph Tabs Analytics -->
+      <div class="glass-card analytics-card">
+        <div class="analytics-header">
+          <h2>LIVE ANALYTICS & TRENDS</h2>
+          <div class="chart-toggles">
+            <button id="chart-lvl-btn" class="chart-tab-btn active">Water Level</button>
+            <button id="chart-usage-btn" class="chart-tab-btn">Hourly Usage</button>
+          </div>
+        </div>
+        
+        <!-- Live Level Chart View -->
+        <div id="level-chart-container" class="chart-viewport">
+          <canvas id="levelTrendChart"></canvas>
+        </div>
+        
+        <!-- Hourly Bar Chart View -->
+        <div id="usage-chart-container" class="chart-viewport hidden">
+          <canvas id="hourlyUsageChart"></canvas>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- Sliding Alerts Side Drawer -->
+  <aside id="alerts-drawer" class="alerts-sidebar closed">
+    <div class="drawer-header">
+      <div class="title-row">
+        <h2>ALERTS HISTORY LOG</h2>
+        <button id="alerts-close-btn" class="icon-btn" aria-label="Close alerts panel">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M18 6 6 18M6 6l12 12"/>
+          </svg>
+        </button>
+      </div>
+      <p>Recent anomalies registered by the hardware FSM controller.</p>
+    </div>
+    
+    <div id="alerts-feed" class="alerts-feed-wrapper">
+      <!-- Empty State -->
+      <div id="alerts-empty" class="alerts-empty-state">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+          <polyline points="22 4 12 14.01 9 11.01"/>
+        </svg>
+        <p>No Alerts Triggered</p>
+        <span>The smart FSM reports system is healthy.</span>
+      </div>
+      
+      <!-- Notifications list injected via app.js -->
+      <ul id="alerts-list" class="alerts-list hidden"></ul>
+    </div>
+  </aside>
+
+  <!-- Interactive Sound Effects (Optional Click feedback) -->
+  <audio id="click-sound" src="https://assets.mixkit.co/active_storage/sfx/2568/2568-84.wav" preload="auto"></audio>
+
+</body>
+</html>
