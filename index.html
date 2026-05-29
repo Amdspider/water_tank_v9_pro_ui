@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Smart Water Tank — Premium IoT Panel</title>
+  <title>spider — IoT MQTT Panel</title>
   
   <!-- Premium Typography -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -16,6 +16,8 @@
 
   <!-- External Stylesheet -->
   <link rel="stylesheet" href="style.css">
+  <link rel="manifest" href="manifest.webmanifest">
+  <meta name="theme-color" content="#070709">
 </head>
 <body>
 
@@ -30,8 +32,8 @@
         <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
       </svg>
       <div class="logo-text">
-        <h1>AQUAFSM</h1>
-        <span>PRO IOT PANEL</span>
+        <h1>spider</h1>
+        <span>IOT MQTT PANEL</span>
       </div>
     </div>
     
@@ -98,6 +100,18 @@
         <div class="input-group">
           <label for="mqtt-client-id">Client Identifier</label>
           <input type="text" id="mqtt-client-id" required placeholder="aquafsm-web-panel">
+        </div>
+        <div class="input-group">
+          <label for="mqtt-hmac-secret">Command HMAC Secret</label>
+          <div class="password-wrapper">
+            <input type="password" id="mqtt-hmac-secret" placeholder="Required only for pump/mode control">
+            <button type="button" id="toggle-hmac-btn" class="password-toggle">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                <circle cx="12" cy="12" r="3"/>
+              </svg>
+            </button>
+          </div>
         </div>
       </div>
       <div class="form-actions">
@@ -203,14 +217,14 @@
               <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
               <path d="M3 3v5h5"/>
             </svg>
-            Reset Usage Data
+            Restart Controller
           </button>
           
           <button id="clear-alerts-btn" class="btn text-btn warning-text">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M18 6 6 18M6 6l12 12"/>
             </svg>
-            Clear Active Alerts
+            Clear Alert Feed
           </button>
         </div>
       </div>
@@ -323,5 +337,12 @@
   <!-- Interactive Sound Effects (Optional Click feedback) -->
   <audio id="click-sound" src="https://assets.mixkit.co/active_storage/sfx/2568/2568-84.wav" preload="auto"></audio>
 
+  <script>
+    if ("serviceWorker" in navigator && location.protocol !== "file:") {
+      window.addEventListener("load", () => {
+        navigator.serviceWorker.register("./sw.js").catch(() => {});
+      });
+    }
+  </script>
 </body>
 </html>

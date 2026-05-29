@@ -6,8 +6,9 @@ const DEFAULT_CONFIG = {
   port: 8884,
   path: '/mqtt',
   user: 'spider.home',
-  pass: 'Amdspider@home5',
-  clientId: 'aquafsm-web-' + Math.random().toString(16).substring(2, 8)
+  pass: '',
+  hmacSecret: '',
+  clientId: 'spider-web-' + Math.random().toString(16).substring(2, 8)
 };
 
 // Global App State
@@ -93,6 +94,19 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
+  const toggleHmacBtn = document.getElementById("toggle-hmac-btn");
+  const hmacInput = document.getElementById("mqtt-hmac-secret");
+  toggleHmacBtn.addEventListener("click", () => {
+    playClickSound();
+    if (hmacInput.type === "password") {
+      hmacInput.type = "text";
+      toggleHmacBtn.style.color = "var(--accent-blue)";
+    } else {
+      hmacInput.type = "password";
+      toggleHmacBtn.style.color = "var(--text-secondary)";
+    }
+  });
+
   // Reset defaults button
   document.getElementById("reset-defaults-btn").addEventListener("click", () => {
     playClickSound();
@@ -113,6 +127,7 @@ document.addEventListener("DOMContentLoaded", () => {
     config.path = document.getElementById("mqtt-path").value.trim();
     config.user = document.getElementById("mqtt-user").value.trim();
     config.pass = document.getElementById("mqtt-pass").value.trim();
+    config.hmacSecret = document.getElementById("mqtt-hmac-secret").value.trim();
     config.clientId = document.getElementById("mqtt-client-id").value.trim();
     
     saveConfig();
@@ -137,26 +152,18 @@ document.addEventListener("DOMContentLoaded", () => {
   // Data reset actions
   document.getElementById("reset-usage-btn").addEventListener("click", () => {
     playClickSound();
-    if (confirm("Send command to reset daily water consumption history?")) {
+    if (confirm("Restart the ESP32 controller?")) {
       if (simulated) {
-        hourlyUsageData.fill(0);
-        updateUsageUI(0);
-        updateUsageChart();
+        injectAlert("INFO", "Demo Restart", "Simulated controller restart acknowledged.");
       } else {
-        publishCommand("water_tank/cmd/reset", "usage");
+        publishCommand("water_tank/cmd/reset", "RESET");
       }
     }
   });
 
   document.getElementById("clear-alerts-btn").addEventListener("click", () => {
     playClickSound();
-    if (confirm("Send command to flush and clear active alarms?")) {
-      if (simulated) {
-        clearAlertsFeed();
-      } else {
-        publishCommand("water_tank/cmd/reset", "alerts");
-      }
-    }
+    clearAlertsFeed();
   });
 
   // Chart Tab Toggles
@@ -182,16 +189,21 @@ document.addEventListener("DOMContentLoaded", () => {
     setTimeout(() => { usageChart.update(); }, 100);
   });
 
-  // Kickstart connections
-  connectMQTT();
+  // Kickstart connection only after password is entered.
+  if (config.pass) {
+    connectMQTT();
+  } else {
+    updateConnectionPill("disconnected", "Enter password");
+    settingsPanel.classList.remove("collapsed");
+  }
 });
 
 // ── Configuration Persistence ────────────────────────────────────────
 function loadConfig() {
-  const saved = localStorage.getItem("aquafsm_config");
+  const saved = localStorage.getItem("spider_config") || localStorage.getItem("aquafsm_config");
   if (saved) {
     try {
-      config = JSON.parse(saved);
+      config = { ...DEFAULT_CONFIG, ...JSON.parse(saved) };
     } catch (e) {
       config = { ...DEFAULT_CONFIG };
     }
@@ -199,7 +211,7 @@ function loadConfig() {
 }
 
 function saveConfig() {
-  localStorage.setItem("aquafsm_config", JSON.stringify(config));
+  localStorage.setItem("spider_config", JSON.stringify(config));
 }
 
 function populateForm() {
@@ -208,6 +220,7 @@ function populateForm() {
   document.getElementById("mqtt-path").value = config.path;
   document.getElementById("mqtt-user").value = config.user;
   document.getElementById("mqtt-pass").value = config.pass;
+  document.getElementById("mqtt-hmac-secret").value = config.hmacSecret || "";
   document.getElementById("mqtt-client-id").value = config.clientId;
 }
 
@@ -219,6 +232,18 @@ function connectMQTT() {
     try { client.end(); } catch(e){}
   }
   
+  if (!window.mqtt) {
+    updateConnectionPill("disconnected", "MQTT lib missing");
+    injectAlert("CRITICAL", "App Library Missing", "MQTT.js did not load. Check internet access or host the library locally.");
+    return;
+  }
+
+  if (!config.pass) {
+    updateConnectionPill("disconnected", "Password needed");
+    injectAlert("WARNING", "Connection Not Started", "Enter the HiveMQ Cloud password in settings, then connect.");
+    return;
+  }
+
   updateConnectionPill("connecting", "Connecting...");
   
   const options = {
@@ -237,15 +262,17 @@ function connectMQTT() {
     client = mqtt.connect(brokerUrl, options);
   } catch (err) {
     console.error("MQTT Connect exception:", err);
-    triggerFallbackSimulation("Broker Connection Refused");
+    updateConnectionPill("disconnected", "Error");
+    injectAlert("WARNING", "MQTT Connection Refused", err?.message || "Could not open the WebSocket connection.");
     return;
   }
   
-  // Timeout monitor to fallback to simulator
+  // Timeout monitor with clear feedback. No fake data is shown on failure.
   const connectTimer = setTimeout(() => {
     if (client && !client.connected) {
-      console.warn("Connection timeout. Initiating fallback simulation mode.");
-      triggerFallbackSimulation("Broker Timeout");
+      console.warn("Connection timeout.");
+      updateConnectionPill("disconnected", "Timeout");
+      injectAlert("WARNING", "MQTT Timeout", "Could not connect. Check host, WSS port 8884, path /mqtt, username, and password.");
     }
   }, 8000);
   
@@ -285,20 +312,51 @@ function connectMQTT() {
   client.on("error", (err) => {
     console.error("MQTT Connection Error:", err);
     updateConnectionPill("disconnected", "Error");
+    injectAlert("WARNING", "MQTT Error", err?.message || "Connection failed.");
   });
 }
 
-function publishCommand(topic, payload) {
+async function signCommandPayload(payload) {
+  const secret = (config.hmacSecret || "").trim();
+  if (!secret) {
+    throw new Error("Command HMAC secret is required for pump and mode control.");
+  }
+  if (!window.crypto?.subtle) {
+    throw new Error("This browser does not support Web Crypto HMAC signing.");
+  }
+  const encoder = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    "raw",
+    encoder.encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  const signature = await crypto.subtle.sign("HMAC", key, encoder.encode(payload));
+  const hex = Array.from(new Uint8Array(signature))
+    .map(b => b.toString(16).padStart(2, "0"))
+    .join("");
+  return `${payload}|${hex}`;
+}
+
+async function publishCommand(topic, payload) {
   if (client && client.connected) {
-    client.publish(topic, payload, { qos: 1, retain: false }, (err) => {
+    let signedPayload;
+    try {
+      signedPayload = await signCommandPayload(payload);
+    } catch (err) {
+      alert(err.message);
+      return;
+    }
+    client.publish(topic, signedPayload, { qos: 1, retain: false }, (err) => {
       if (err) {
         console.error(`Pub failed for ${topic}:`, err);
       } else {
-        console.log(`[MQTT Tx] ${topic}: ${payload}`);
+        console.log(`[MQTT Tx] ${topic}: ${payload}|<hmac>`);
       }
     });
   } else {
-    alert("Offline: Command cannot be published. Setup connection or run simulator.");
+    alert("Offline: Command cannot be published. Connect to HiveMQ first.");
   }
 }
 
