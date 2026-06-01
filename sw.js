@@ -1,4 +1,4 @@
-const CACHE_NAME = "water-tank-panel-v2";
+const CACHE_NAME = "water-tank-panel-v3";
 const APP_FILES = [
   "./",
   "./index.html",

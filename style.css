@@ -304,7 +304,7 @@ body {
 
 .form-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   gap: 1.2rem;
   margin-bottom: 1.5rem;
 }
@@ -329,15 +329,17 @@ body {
   display: flex;
   flex-direction: column;
   gap: 0.4rem;
+  min-width: 0;
 }
 
 .input-row {
-  display: flex;
+  display: contents;
   gap: 1rem;
 }
 
 .input-group.half {
   flex: 1;
+  min-width: 0;
 }
 
 .input-group label {
@@ -346,9 +348,14 @@ body {
   letter-spacing: 0.5px;
   color: var(--text-secondary);
   text-transform: uppercase;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .input-group input {
+  width: 100%;
+  min-width: 0;
   background: rgba(255, 255, 255, 0.04);
   border: 1px solid var(--border-color);
   color: var(--text-primary);
