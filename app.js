@@ -26,9 +26,13 @@ const timeLabels = [];
 const hourlyUsageData = Array(24).fill(0);
 
 // Sound effects active state
-const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+let audioCtx = null;
 function playClickSound() {
   try {
+    const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextCtor) return;
+    if (!audioCtx) audioCtx = new AudioContextCtor();
+
     const osc = audioCtx.createOscillator();
     const gain = audioCtx.createGain();
     osc.connect(gain);
@@ -56,10 +60,15 @@ document.addEventListener("DOMContentLoaded", () => {
   
   // Settings drawer toggle
   const settingsBtn = document.getElementById("settings-toggle-btn");
+  const settingsOpenBtn = document.getElementById("settings-open-btn");
   const settingsPanel = document.getElementById("settings-panel");
   settingsBtn.addEventListener("click", () => {
     playClickSound();
     settingsPanel.classList.toggle("collapsed");
+  });
+  settingsOpenBtn.addEventListener("click", () => {
+    playClickSound();
+    settingsPanel.classList.remove("collapsed");
   });
 
   // Alerts sidebar toggle
@@ -186,7 +195,9 @@ document.addEventListener("DOMContentLoaded", () => {
     tabLvl.classList.remove("active");
     usgContainer.classList.remove("hidden");
     lvlContainer.classList.add("hidden");
-    setTimeout(() => { usageChart.update(); }, 100);
+    setTimeout(() => {
+      if (usageChart) usageChart.update();
+    }, 100);
   });
 
   // Kickstart connection only after password is entered.
@@ -669,8 +680,20 @@ function clearAlertsFeed() {
 
 // ── Chart.js Configurations ───────────────────────────────────────────
 function initializeCharts() {
+  const levelCanvas = document.getElementById("levelTrendChart");
+  const usageCanvas = document.getElementById("hourlyUsageChart");
+
+  if (!levelCanvas || !usageCanvas) return;
+
+  if (!window.Chart) {
+    console.warn("Chart.js not loaded; chart tabs will show fallback text.");
+    levelCanvas.insertAdjacentHTML("afterend", '<div class="chart-fallback">Chart library not loaded</div>');
+    usageCanvas.insertAdjacentHTML("afterend", '<div class="chart-fallback">Chart library not loaded</div>');
+    return;
+  }
+
   // 1. Water Level Trend Line Chart
-  const ctxLvl = document.getElementById("levelTrendChart").getContext("2d");
+  const ctxLvl = levelCanvas.getContext("2d");
   
   const neonCyanGrad = ctxLvl.createLinearGradient(0, 0, 0, 200);
   neonCyanGrad.addColorStop(0, 'rgba(0, 210, 255, 0.25)');
@@ -715,7 +738,7 @@ function initializeCharts() {
   });
 
   // 2. Hourly Consumption Bar Chart
-  const ctxUsg = document.getElementById("hourlyUsageChart").getContext("2d");
+  const ctxUsg = usageCanvas.getContext("2d");
   const hourlyLabels = Array.from({ length: 24 }, (_, i) => `${i.toString().padStart(2, '0')}:00`);
   
   usageChart = new Chart(ctxUsg, {

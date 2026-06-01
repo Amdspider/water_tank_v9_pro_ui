@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>spider — IoT MQTT Panel</title>
+  <title>spider - IoT MQTT Panel</title>
   
   <!-- Premium Typography -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -29,7 +29,10 @@
   <header class="app-header">
     <div class="header-logo">
       <svg class="logo-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
+        <path d="M12 2.5s6 6.4 6 11.2A6 6 0 0 1 6 13.7C6 8.9 12 2.5 12 2.5z"/>
+        <path d="M9.2 14.2c1.8 1.2 3.7 1.2 5.6 0"/>
+        <path d="M5 20h14"/>
+        <path d="M8 20v-2M16 20v-2"/>
       </svg>
       <div class="logo-text">
         <h1>spider</h1>
@@ -42,6 +45,10 @@
         <span class="status-dot"></span>
         <span id="connection-status-text">Disconnected</span>
       </div>
+
+      <button id="settings-open-btn" class="settings-text-btn" type="button">
+        <span>Connection</span>
+      </button>
       
       <button id="settings-toggle-btn" class="icon-btn" aria-label="Toggle connection settings">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -63,10 +70,11 @@
   <section id="settings-panel" class="settings-drawer collapsed">
     <div class="drawer-header">
       <h2>HIVEMQ CLOUD CONNECTION</h2>
-      <p>Configure your IoT MQTT WebSocket parameters below. Settings persist in local storage.</p>
+      <p>Enter HiveMQ password and private command details here. They stay only in this browser.</p>
     </div>
     <form id="connection-form">
       <div class="form-grid">
+        <div class="settings-section-title">Broker</div>
         <div class="input-group">
           <label for="mqtt-host">Broker Host Address</label>
           <input type="text" id="mqtt-host" required placeholder="3356a8cf8c9943d183bec9e288fc9d4c.s1.eu.hivemq.cloud">
@@ -85,8 +93,9 @@
           <label for="mqtt-user">Username</label>
           <input type="text" id="mqtt-user" required placeholder="spider.home">
         </div>
+        <div class="settings-section-title">Private Details</div>
         <div class="input-group">
-          <label for="mqtt-pass">Password</label>
+          <label for="mqtt-pass">HiveMQ Password</label>
           <div class="password-wrapper">
             <input type="password" id="mqtt-pass" required placeholder="••••••••••••••">
             <button type="button" id="toggle-password-btn" class="password-toggle">
@@ -102,7 +111,7 @@
           <input type="text" id="mqtt-client-id" required placeholder="aquafsm-web-panel">
         </div>
         <div class="input-group">
-          <label for="mqtt-hmac-secret">Command HMAC Secret</label>
+          <label for="mqtt-hmac-secret">ESP32 Command HMAC Secret</label>
           <div class="password-wrapper">
             <input type="password" id="mqtt-hmac-secret" placeholder="Required only for pump/mode control">
             <button type="button" id="toggle-hmac-btn" class="password-toggle">
@@ -344,5 +353,6 @@
       });
     }
   </script>
+  <script src="app.js"></script>
 </body>
 </html>
