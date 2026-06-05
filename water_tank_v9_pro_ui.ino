@@ -280,6 +280,7 @@ struct BzRequest { int pat; bool repeat; };
 #define MANUAL_FULL_RESPONSE_MS 12000UL
 #define NVS_NS            "wtank"
 #define MQTT_CLIENT_ID    "water-tank-esp32"
+#define FW_VERSION        "v9.1-debug"
 #define EEPROM_SZ         512
 #define EE_MAGIC_A        0
 #define EE_MAGIC          0xAE
@@ -302,10 +303,18 @@ struct BzRequest { int pat; bool repeat; };
 #define T_LEAK      "water_tank/leak"
 #define T_ETA       "water_tank/fill_eta"
 #define T_SCORE     "water_tank/leak_score"
+#define T_DBG_INFO  "water_tank/debug/info"
+#define T_DBG_LIVE  "water_tank/debug/live"
+#define T_DBG_SENS  "water_tank/debug/sensors"
+#define T_DBG_POWER "water_tank/debug/power"
+#define T_DBG_TASKS "water_tank/debug/tasks"
+#define T_DBG_EVENT "water_tank/debug/events"
 #define T_CMD_PMP   "water_tank/cmd/pump"
 #define T_CMD_MOD   "water_tank/cmd/mode"
 #define T_CMD_RST   "water_tank/cmd/reset"
+#define T_CMD_DBG   "water_tank/cmd/debug"
 #define MQTT_PUB_MS 5000
+#define DEBUG_PUB_MS 3000
 
 // ============================================================
 //  STRUCTURES
@@ -404,12 +413,17 @@ volatile unsigned long pumpToutChk=0, dryRunTime=0, voltAbnormalTimer=0;
 volatile unsigned long manualFullAlarmAt=0;
 volatile unsigned long usageUpd=0;
 volatile unsigned long bootTimeMs=0, litresSaveTmr=0, mqttLastPub=0;
+volatile unsigned long debugLastPub=0;
+volatile unsigned long hbSensor=0, hbControl=0, hbButton=0, hbDisplay=0, hbMqtt=0;
 volatile float    levelAtStart=0;
 char              pumpStartReason[48]="boot";
 char              pumpStopReason[64]="boot";
 volatile SystemState sysState=SYS_IDLE;
 volatile OpMode   opMode=MODE_AUTO;
 volatile bool     g_pendingSave=false;
+volatile bool     debugEnabled=false;
+volatile uint32_t mqttConnectCount=0, mqttFailCount=0;
+volatile float    lastDistanceCm=-1.0f;
 
 // UI state
 volatile int   currentScreen=0, lastScreen=-1;
@@ -947,6 +961,7 @@ void doNightSleep(){
 // ============================================================
 void SensorTask(void* pv){
   for(;;){
+    hbSensor=millis();
     if(usState==US_IDLE2){
       if(millis()-usLastRead>=1000){ usLastRead=millis(); usIdx=0; usN=0; usState=US_TRIG; }
     }
@@ -972,6 +987,7 @@ void SensorTask(void* pv){
       if(usN>0){
         for(int i=1;i<usN;i++){float k=usBuf[i];int j=i-1;while(j>=0&&usBuf[j]>k){usBuf[j+1]=usBuf[j];j--;}usBuf[j+1]=k;}
         float d=usBuf[usN/2];
+        lastDistanceCm=d;
         float h=cfg.tankH-(d-SENSOR_OFF_CM);
         float lvl=constrain(h/cfg.tankH*100.0f,0.0f,100.0f);
         if(TAKE_MUTEX(xStateMutex,10)){
@@ -1194,6 +1210,7 @@ void checkDryRun(){
 
 void ControlTask(void* pv){
   for(;;){
+    hbControl=millis();
     if(TAKE_MUTEX(xStateMutex,20)){
       pushLevelHistory(smoothLevel);
       updateSystemState(); updateLeakScore();
@@ -1456,6 +1473,7 @@ void handleButton(AceButton* btn,uint8_t evt,uint8_t){
 
 void ButtonTask(void* pv){
   for(;;){
+    hbButton=millis();
     btn1.check(); btn2.check(); checkDualHold();
     if(currentScreen!=SCR_MAIN&&millis()-lastButtonTime>AUTO_RETURN_MS&&millis()-bootTimeMs>20000){
       currentScreen=SCR_MAIN; uiRedraw=true;
@@ -2711,6 +2729,7 @@ static unsigned long lastFullRedraw=0;
 
 void DisplayTask(void* pv){
   for(;;){
+    hbDisplay=millis();
     if(TAKE_MUTEX(xTftMutex,50)){
       bool screenChanged=(currentScreen!=lastScreen);
       if(screenChanged){
@@ -2765,6 +2784,68 @@ void DisplayTask(void* pv){
 // ============================================================
 //  MQTT TASK (Core 0)
 // ============================================================
+const char* resetReasonText(esp_reset_reason_t reason){
+  switch(reason){
+    case ESP_RST_POWERON: return "POWERON";
+    case ESP_RST_EXT: return "EXTERNAL";
+    case ESP_RST_SW: return "SOFTWARE";
+    case ESP_RST_PANIC: return "PANIC";
+    case ESP_RST_INT_WDT: return "INT_WDT";
+    case ESP_RST_TASK_WDT: return "TASK_WDT";
+    case ESP_RST_WDT: return "WDT";
+    case ESP_RST_DEEPSLEEP: return "DEEPSLEEP";
+    case ESP_RST_BROWNOUT: return "BROWNOUT";
+    case ESP_RST_SDIO: return "SDIO";
+    default: return "UNKNOWN";
+  }
+}
+
+void mqttPublishDebug(){
+  if(!mqtt.connected()||!debugEnabled)return;
+
+  char payload[360];
+  String ip = WiFi.isConnected() ? WiFi.localIP().toString() : String("0.0.0.0");
+
+  snprintf(payload,sizeof(payload),
+    "{\"fw\":\"%s\",\"build\":\"%s %s\",\"chip\":\"%s\",\"cores\":%u,\"cpu_mhz\":%u,\"sdk\":\"%s\",\"reset\":\"%s\",\"flash\":%u}",
+    FW_VERSION,__DATE__,__TIME__,ESP.getChipModel(),ESP.getChipCores(),ESP.getCpuFreqMHz(),
+    ESP.getSdkVersion(),resetReasonText(esp_reset_reason()),ESP.getFlashChipSize());
+  mqtt.publish(T_DBG_INFO,payload,true);
+
+  snprintf(payload,sizeof(payload),
+    "{\"uptime_s\":%lu,\"heap\":%u,\"min_heap\":%u,\"max_alloc\":%u,\"wifi\":%s,\"rssi\":%d,\"ip\":\"%s\",\"mqtt\":%s,\"state\":\"%s\",\"mode\":\"%s\",\"pump\":%s,\"sleep_req\":%s}",
+    millis()/1000,ESP.getFreeHeap(),ESP.getMinFreeHeap(),ESP.getMaxAllocHeap(),
+    WiFi.isConnected()?"true":"false",WiFi.isConnected()?WiFi.RSSI():0,ip.c_str(),
+    mqtt.connected()?"true":"false",sysStateStr[sysState],
+    opMode==MODE_AUTO?"AUTO":opMode==MODE_MANUAL?"MANUAL":"MAINTENANCE",
+    pumpRunning?"true":"false",sleepRequested?"true":"false");
+  mqtt.publish(T_DBG_LIVE,payload);
+
+  snprintf(payload,sizeof(payload),
+    "{\"level\":%.1f,\"raw_level\":%.1f,\"distance_cm\":%.1f,\"voltage\":%.1f,\"sensor_ok\":%s,\"volt_ok\":%s,\"leak_score\":%d,\"eta_min\":%.1f,\"slope\":%.2f}",
+    smoothLevel,waterLevel,lastDistanceCm,smoothVoltage,(usN>0||maLevel.count>0)?"true":"false",
+    isVoltSafe(smoothVoltage)?"true":"false",lastLeakScore,fillEtaMin,currentSlope);
+  mqtt.publish(T_DBG_SENS,payload);
+
+  snprintf(payload,sizeof(payload),
+    "{\"ac_v\":%.1f,\"meter\":\"ZMPT only\",\"motor_current\":\"not_measured\",\"motor_power\":\"not_measured\",\"esp_5v\":\"not_measured\",\"box_temp\":\"not_measured\"}",
+    smoothVoltage);
+  mqtt.publish(T_DBG_POWER,payload);
+
+  unsigned long now=millis();
+  snprintf(payload,sizeof(payload),
+    "{\"sensor_lag_ms\":%lu,\"control_lag_ms\":%lu,\"button_lag_ms\":%lu,\"display_lag_ms\":%lu,\"mqtt_lag_ms\":%lu,\"mqtt_connects\":%lu,\"mqtt_fails\":%lu,\"alerts\":%d}",
+    now-hbSensor,now-hbControl,now-hbButton,now-hbDisplay,now-hbMqtt,
+    (unsigned long)mqttConnectCount,(unsigned long)mqttFailCount,activeAlerts);
+  mqtt.publish(T_DBG_TASKS,payload);
+
+  snprintf(payload,sizeof(payload),
+    "{\"pump_start\":\"%s\",\"pump_stop\":\"%s\",\"very_low\":%s,\"volt_warn\":%s,\"leak\":%s,\"pump_timeout\":%s,\"dry_run_checked\":%s}",
+    pumpStartReason,pumpStopReason,veryLow?"true":"false",voltWarn?"true":"false",
+    leakConfirmed?"true":"false",pumpTimedOut?"true":"false",dryRunChk?"true":"false");
+  mqtt.publish(T_DBG_EVENT,payload);
+}
+
 bool verifyHmac(const char* cmd,const char* tok){
   uint8_t result[32]; mbedtls_md_context_t ctx;
   mbedtls_md_type_t type=MBEDTLS_MD_SHA256;
@@ -2790,6 +2871,15 @@ void mqttCallback(char* topic,byte* payload,unsigned int length){
     else if(!strcmp(cmd,"MANUAL"))opMode=MODE_MANUAL;
   } else if(!strcmp(topic,T_CMD_RST)){
     if(!strcmp(cmd,"RESET"))ESP.restart();
+  } else if(!strcmp(topic,T_CMD_DBG)){
+    if(!strcmp(cmd,"ON")){
+      debugEnabled=true;
+      debugLastPub=0;
+      MQTT_LOG("Debug enabled");
+    } else if(!strcmp(cmd,"OFF")){
+      debugEnabled=false;
+      MQTT_LOG("Debug disabled");
+    }
   }
 }
 
@@ -2799,10 +2889,11 @@ void mqttReconnect(){
   mqtt.setSocketTimeout(5);
   bool ok=mqtt.connect(MQTT_CLIENT_ID,cfg.mqttUser,cfg.mqttPass,T_STATUS,1,true,"offline");
   if(ok){
-    mqtt.subscribe(T_CMD_PMP); mqtt.subscribe(T_CMD_MOD); mqtt.subscribe(T_CMD_RST);
+    mqttConnectCount++;
+    mqtt.subscribe(T_CMD_PMP); mqtt.subscribe(T_CMD_MOD); mqtt.subscribe(T_CMD_RST); mqtt.subscribe(T_CMD_DBG);
     mqtt.publish(T_STATUS,"online",true);
     MQTT_LOG("Connected");
-  } else { MQTT_LOG("Failed rc=%d",mqtt.state()); }
+  } else { mqttFailCount++; MQTT_LOG("Failed rc=%d",mqtt.state()); }
 }
 
 void mqttPublish(){
@@ -2824,9 +2915,11 @@ void MqttTask(void* pv){
   for(;;){
     ArduinoOTA.handle();
     if(WiFi.isConnected()&&mqttEnabled){
+      hbMqtt=millis();
       if(!mqtt.connected())mqttReconnect();
       mqtt.loop();
       if(millis()-mqttLastPub>MQTT_PUB_MS){ mqttLastPub=millis(); mqttPublish(); }
+      if(debugEnabled&&millis()-debugLastPub>DEBUG_PUB_MS){ debugLastPub=millis(); mqttPublishDebug(); }
     }
     vTaskDelay(pdMS_TO_TICKS(10));
   }
@@ -2904,6 +2997,7 @@ void setup(){
     if(strlen(g_brokerCA)>64)secClient.setCACert(g_brokerCA);
     else secClient.setInsecure();
     mqtt.setServer(cfg.broker,cfg.mqttPort);
+    mqtt.setBufferSize(512);
     mqtt.setCallback(mqttCallback);
     ArduinoOTA.setHostname("water-tank-esp32");
     ArduinoOTA.setPassword(g_otaPass);
@@ -2923,6 +3017,7 @@ void setup(){
   }
   if(strlen(cfg.broker)>0){
     mqtt.setServer(cfg.broker,cfg.mqttPort);
+    mqtt.setBufferSize(512);
     mqtt.setCallback(mqttCallback);
   }
 
