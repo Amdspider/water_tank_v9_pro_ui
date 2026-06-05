@@ -149,6 +149,11 @@ body {
   border-color: rgba(255, 255, 255, 0.2);
 }
 
+.admin-text-btn {
+  border-color: rgba(48, 232, 162, 0.18);
+  color: var(--accent-green);
+}
+
 /* Custom icon buttons */
 .icon-btn {
   background: rgba(255, 255, 255, 0.05);
@@ -1029,6 +1034,152 @@ body {
   transform: translateX(0);
 }
 
+/* Admin debug drawer */
+.admin-debug-sidebar {
+  position: fixed;
+  top: 0;
+  right: 0;
+  width: min(560px, 100%);
+  height: 100vh;
+  background: rgba(10, 12, 14, 0.92);
+  backdrop-filter: blur(30px);
+  -webkit-backdrop-filter: blur(30px);
+  border-left: 1px solid rgba(48, 232, 162, 0.16);
+  z-index: 1100;
+  padding: 2.2rem 1.8rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  transition: transform 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+  transform: translateX(100%);
+  box-shadow: -10px 0 30px rgba(0, 0, 0, 0.5);
+}
+
+.admin-debug-sidebar.closed {
+  transform: translateX(100%);
+}
+
+.admin-debug-sidebar:not(.closed) {
+  transform: translateX(0);
+}
+
+.admin-debug-sidebar h2 {
+  font-size: 0.9rem;
+  font-weight: 700;
+  letter-spacing: 1px;
+  color: var(--accent-green);
+}
+
+.admin-login-panel,
+.admin-debug-content {
+  min-height: 0;
+}
+
+.admin-login-form {
+  display: grid;
+  gap: 1rem;
+}
+
+.admin-login-form .btn {
+  justify-content: center;
+}
+
+.admin-security-note {
+  margin-top: 1rem;
+  font-size: 0.72rem;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.admin-debug-content {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  overflow-y: auto;
+  padding-right: 0.4rem;
+}
+
+.admin-debug-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--border-color);
+  padding-bottom: 1rem;
+}
+
+.debug-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.7rem;
+}
+
+.debug-summary-item,
+.debug-field {
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.debug-summary-item {
+  min-height: 78px;
+  padding: 0.8rem;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 0.6rem;
+}
+
+.debug-summary-item span,
+.debug-field span {
+  color: var(--text-secondary);
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+}
+
+.debug-summary-item strong {
+  color: var(--text-primary);
+  font-size: 0.9rem;
+  overflow-wrap: anywhere;
+}
+
+.debug-fields-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.7rem;
+}
+
+.debug-field {
+  min-height: 68px;
+  padding: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.debug-field strong {
+  color: var(--text-primary);
+  font-size: 0.82rem;
+  font-weight: 650;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.admin-debug-content::-webkit-scrollbar {
+  width: 5px;
+}
+
+.admin-debug-content::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.admin-debug-content::-webkit-scrollbar-thumb {
+  background: rgba(48, 232, 162, 0.18);
+  border-radius: 10px;
+}
+
 .alerts-sidebar .drawer-header {
   border-bottom: 1px solid var(--border-color);
   padding-bottom: 1.2rem;
@@ -1288,5 +1439,13 @@ body {
   }
   .alerts-sidebar {
     width: 100%;
+  }
+  .admin-debug-sidebar {
+    width: 100%;
+    padding: 1.2rem 1rem;
+  }
+  .debug-summary-grid,
+  .debug-fields-grid {
+    grid-template-columns: 1fr;
   }
 }

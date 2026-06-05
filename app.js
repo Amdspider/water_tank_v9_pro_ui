@@ -17,13 +17,79 @@ let client = null;
 let simulated = false;
 let simulationInterval = null;
 let activeAlerts = [];
+let adminUnlocked = false;
 
 // Visual charts tracking
 let levelChart = null;
 let usageChart = null;
 const levelHistory = [];
 const timeLabels = [];
-const hourlyUsageData = Array(24).fill(0);
+let hourlyUsageData = Array(24).fill(0);
+let lastUsageTotal = null;
+let usageAnalyticsDate = currentDateKey();
+
+const USAGE_ANALYTICS_KEY = "spider_hourly_usage_v1";
+const ADMIN_AUTH_KEY = "spider_admin_auth_v1";
+const ADMIN_SESSION_KEY = "spider_admin_session_v1";
+const ADMIN_SESSION_TTL_MS = 15 * 60 * 1000;
+
+const debugSnapshot = {
+  firmware: "--",
+  buildDate: "--",
+  chipModel: "--",
+  cpuMhz: "--",
+  cores: "--",
+  freeHeap: "--",
+  minHeap: "--",
+  uptime: "--",
+  wifiRssi: "--",
+  ip: "--",
+  mqttState: "--",
+  systemState: "--",
+  pumpState: "--",
+  pumpMode: "--",
+  sensorRaw: "--",
+  sensorUpdatedAt: "--",
+  ultrasonicDistance: "--",
+  waterLevelRaw: "--",
+  waterLevelSmooth: "--",
+  voltage: "--",
+  resetReason: "--",
+  taskLag: "--",
+  heartbeat: "--",
+  mqttReconnects: "--",
+  errorFlags: "--",
+  lastAlert: "--"
+};
+
+const debugFieldLabels = [
+  ["firmware", "Firmware Version"],
+  ["buildDate", "Build Date"],
+  ["chipModel", "Chip Model"],
+  ["cpuMhz", "CPU MHz"],
+  ["cores", "Core Count"],
+  ["freeHeap", "Free Heap"],
+  ["minHeap", "Minimum Heap"],
+  ["uptime", "Uptime"],
+  ["wifiRssi", "WiFi RSSI"],
+  ["ip", "Device IP"],
+  ["mqttState", "MQTT State"],
+  ["systemState", "System State"],
+  ["pumpState", "Pump State"],
+  ["pumpMode", "Pump Mode"],
+  ["sensorRaw", "Sensor Raw Values"],
+  ["sensorUpdatedAt", "Last Sensor Update"],
+  ["ultrasonicDistance", "Ultrasonic Distance"],
+  ["waterLevelRaw", "Water Level Raw"],
+  ["waterLevelSmooth", "Water Level Smooth"],
+  ["voltage", "Voltage / PZEM"],
+  ["resetReason", "Last Reset Reason"],
+  ["taskLag", "Task Lag"],
+  ["heartbeat", "Heartbeat Timers"],
+  ["mqttReconnects", "MQTT Reconnect Count"],
+  ["errorFlags", "Error Flags"],
+  ["lastAlert", "Last Alert Reason"]
+];
 
 // Sound effects active state
 let audioCtx = null;
@@ -55,8 +121,10 @@ function playClickSound() {
 // ── Initial Setup & UI Bindings ─────────────────────────────────────
 document.addEventListener("DOMContentLoaded", () => {
   loadConfig();
+  loadUsageAnalytics();
   populateForm();
   initializeCharts();
+  initializeAdminDebugPanel();
   
   // Settings drawer toggle
   const settingsBtn = document.getElementById("settings-toggle-btn");
@@ -214,7 +282,16 @@ function loadConfig() {
   const saved = localStorage.getItem("spider_config") || localStorage.getItem("aquafsm_config");
   if (saved) {
     try {
-      config = { ...DEFAULT_CONFIG, ...JSON.parse(saved) };
+      const parsed = JSON.parse(saved);
+      config = {
+        ...DEFAULT_CONFIG,
+        ...parsed,
+        pass: "",
+        hmacSecret: ""
+      };
+      if (parsed.pass || parsed.hmacSecret) {
+        saveConfig();
+      }
     } catch (e) {
       config = { ...DEFAULT_CONFIG };
     }
@@ -222,7 +299,15 @@ function loadConfig() {
 }
 
 function saveConfig() {
-  localStorage.setItem("spider_config", JSON.stringify(config));
+  const safeConfig = {
+    host: config.host,
+    port: config.port,
+    path: config.path,
+    user: config.user,
+    clientId: config.clientId
+  };
+  localStorage.setItem("spider_config", JSON.stringify(safeConfig));
+  localStorage.removeItem("aquafsm_config");
 }
 
 function populateForm() {
@@ -230,9 +315,322 @@ function populateForm() {
   document.getElementById("mqtt-port").value = config.port;
   document.getElementById("mqtt-path").value = config.path;
   document.getElementById("mqtt-user").value = config.user;
-  document.getElementById("mqtt-pass").value = config.pass;
-  document.getElementById("mqtt-hmac-secret").value = config.hmacSecret || "";
+  document.getElementById("mqtt-pass").value = "";
+  document.getElementById("mqtt-hmac-secret").value = "";
   document.getElementById("mqtt-client-id").value = config.clientId;
+}
+
+// Hourly water analytics are stored locally so refreshes do not erase the day.
+function currentDateKey() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function loadUsageAnalytics() {
+  const saved = localStorage.getItem(USAGE_ANALYTICS_KEY);
+  if (!saved) return;
+
+  try {
+    const parsed = JSON.parse(saved);
+    if (parsed.date === currentDateKey() && Array.isArray(parsed.hourly)) {
+      hourlyUsageData = parsed.hourly.slice(0, 24).map(v => Number(v) || 0);
+      while (hourlyUsageData.length < 24) hourlyUsageData.push(0);
+      lastUsageTotal = Number.isFinite(parsed.lastTotal) ? parsed.lastTotal : null;
+      usageAnalyticsDate = parsed.date;
+    }
+  } catch (e) {
+    hourlyUsageData = Array(24).fill(0);
+    lastUsageTotal = null;
+  }
+}
+
+function saveUsageAnalytics() {
+  localStorage.setItem(USAGE_ANALYTICS_KEY, JSON.stringify({
+    date: usageAnalyticsDate,
+    hourly: hourlyUsageData,
+    lastTotal: lastUsageTotal
+  }));
+}
+
+function ensureUsageDateIsCurrent() {
+  const today = currentDateKey();
+  if (usageAnalyticsDate !== today) {
+    usageAnalyticsDate = today;
+    hourlyUsageData = Array(24).fill(0);
+    lastUsageTotal = null;
+    saveUsageAnalytics();
+  }
+}
+
+function recordHourlyUsage(totalLitres) {
+  if (!Number.isFinite(totalLitres)) return;
+
+  ensureUsageDateIsCurrent();
+  const hr = new Date().getHours();
+  let delta = 0;
+
+  if (lastUsageTotal !== null) {
+    delta = totalLitres >= lastUsageTotal ? totalLitres - lastUsageTotal : totalLitres;
+  }
+
+  hourlyUsageData[hr] = Number((hourlyUsageData[hr] + Math.max(0, delta)).toFixed(2));
+  lastUsageTotal = totalLitres;
+  saveUsageAnalytics();
+}
+
+function formatDebugValue(value) {
+  if (value === null || value === undefined || value === "") return "--";
+  if (typeof value === "number") return Number.isInteger(value) ? String(value) : value.toFixed(2);
+  if (Array.isArray(value)) return value.join(", ");
+  if (typeof value === "object") return JSON.stringify(value);
+  return String(value);
+}
+
+function renderDebugPanel() {
+  const grid = document.getElementById("debug-fields-grid");
+  if (!grid) return;
+
+  document.getElementById("debug-system-state").textContent = formatDebugValue(debugSnapshot.systemState);
+  document.getElementById("debug-pump-state").textContent = formatDebugValue(debugSnapshot.pumpState);
+  document.getElementById("debug-mqtt-state").textContent = formatDebugValue(debugSnapshot.mqttState);
+  document.getElementById("debug-wifi-rssi").textContent = formatDebugValue(debugSnapshot.wifiRssi);
+
+  grid.innerHTML = "";
+  debugFieldLabels.forEach(([key, label]) => {
+    const item = document.createElement("div");
+    item.className = "debug-field";
+    item.innerHTML = `<span>${label}</span><strong>${formatDebugValue(debugSnapshot[key])}</strong>`;
+    grid.appendChild(item);
+  });
+}
+
+function updateDebugSnapshot(values) {
+  Object.assign(debugSnapshot, values);
+  if (adminUnlocked) renderDebugPanel();
+}
+
+function firstPresent(...values) {
+  return values.find(value => value !== undefined && value !== null && value !== "");
+}
+
+function normalizeDebugPayload(raw) {
+  const source = raw || {};
+  return {
+    firmware: firstPresent(source.firmware, source.firmwareVersion, source.version),
+    buildDate: firstPresent(source.buildDate, source.build_date, source.build),
+    chipModel: firstPresent(source.chipModel, source.chip_model, source.chip),
+    cpuMhz: firstPresent(source.cpuMhz, source.cpu_mhz, source.cpuMHz),
+    cores: firstPresent(source.cores, source.coreCount, source.core_count),
+    freeHeap: firstPresent(source.freeHeap, source.free_heap),
+    minHeap: firstPresent(source.minHeap, source.minimumHeap, source.min_heap),
+    uptime: firstPresent(source.uptime, source.uptimeText, source.uptime_sec),
+    wifiRssi: firstPresent(source.wifiRssi, source.rssi, source.wifi_rssi),
+    ip: firstPresent(source.ip, source.wifiIp, source.wifi_ip),
+    mqttState: firstPresent(source.mqttState, source.mqtt, source.mqtt_connected),
+    systemState: firstPresent(source.systemState, source.state, source.fsm_state),
+    pumpState: firstPresent(source.pumpState, source.pump),
+    pumpMode: firstPresent(source.pumpMode, source.mode),
+    sensorRaw: firstPresent(source.sensorRaw, source.rawSensors, source.sensor_raw),
+    sensorUpdatedAt: firstPresent(source.sensorUpdatedAt, source.lastSensorUpdate, source.sensor_updated_at),
+    ultrasonicDistance: firstPresent(source.ultrasonicDistance, source.distanceCm, source.distance_cm),
+    waterLevelRaw: firstPresent(source.waterLevelRaw, source.levelRaw, source.level_raw),
+    waterLevelSmooth: firstPresent(source.waterLevelSmooth, source.levelSmooth, source.level_smooth),
+    voltage: firstPresent(source.voltage, source.lineVoltage, source.pzemVoltage),
+    resetReason: firstPresent(source.resetReason, source.lastResetReason, source.reset_reason),
+    taskLag: firstPresent(source.taskLag, source.task_lag),
+    heartbeat: firstPresent(source.heartbeat, source.heartbeats),
+    mqttReconnects: firstPresent(source.mqttReconnects, source.mqtt_reconnects),
+    errorFlags: firstPresent(source.errorFlags, source.errors, source.error_flags),
+    lastAlert: firstPresent(source.lastAlert, source.lastAlertReason, source.last_alert)
+  };
+}
+
+function handleDebugPayload(msg) {
+  if (!adminUnlocked) return;
+
+  try {
+    updateDebugSnapshot(normalizeDebugPayload(JSON.parse(msg)));
+  } catch (e) {
+    updateDebugSnapshot({ lastAlert: msg });
+  }
+}
+
+async function hashAdminPassword(username, password, salt) {
+  const encoder = new TextEncoder();
+  const material = await crypto.subtle.importKey(
+    "raw",
+    encoder.encode(`${username}:${password}`),
+    { name: "PBKDF2" },
+    false,
+    ["deriveBits"]
+  );
+  const bits = await crypto.subtle.deriveBits(
+    { name: "PBKDF2", salt: encoder.encode(salt), iterations: 120000, hash: "SHA-256" },
+    material,
+    256
+  );
+  return Array.from(new Uint8Array(bits)).map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
+function randomHex(bytes = 16) {
+  const data = new Uint8Array(bytes);
+  crypto.getRandomValues(data);
+  return Array.from(data).map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
+function loadAdminAuth() {
+  try {
+    return JSON.parse(localStorage.getItem(ADMIN_AUTH_KEY) || "null");
+  } catch (e) {
+    return null;
+  }
+}
+
+function saveAdminSession(username) {
+  sessionStorage.setItem(ADMIN_SESSION_KEY, JSON.stringify({
+    username,
+    expiresAt: Date.now() + ADMIN_SESSION_TTL_MS
+  }));
+}
+
+function loadAdminSession() {
+  try {
+    const session = JSON.parse(sessionStorage.getItem(ADMIN_SESSION_KEY) || "null");
+    if (session && session.expiresAt > Date.now()) return session;
+  } catch (e) {}
+  sessionStorage.removeItem(ADMIN_SESSION_KEY);
+  return null;
+}
+
+function setAdminUnlocked(unlocked, username = "") {
+  adminUnlocked = unlocked;
+  document.getElementById("admin-login-panel").classList.toggle("hidden", unlocked);
+  document.getElementById("admin-debug-content").classList.toggle("hidden", !unlocked);
+  document.getElementById("admin-debug-subtitle").textContent = unlocked
+    ? "Live trusted diagnostics. Keep this locked when not maintaining the controller."
+    : "Locked diagnostics for trusted maintenance only.";
+  document.getElementById("admin-session-label").textContent = username ? `Admin: ${username}` : "Admin unlocked";
+  if (unlocked) renderDebugPanel();
+}
+
+function requestDebugSnapshot() {
+  if (!adminUnlocked) return;
+  if (client && client.connected) {
+    publishCommand("water_tank/cmd/debug", "SNAPSHOT");
+  } else if (simulated) {
+    updateDebugSnapshot(makeSimulatedDebugSnapshot());
+  } else {
+    injectAlert("WARNING", "Debug Snapshot Not Sent", "Connect MQTT before requesting live firmware diagnostics.");
+  }
+}
+
+function makeSimulatedDebugSnapshot() {
+  return {
+    firmware: "web-sim",
+    buildDate: new Date().toLocaleString(),
+    chipModel: "ESP32 simulator",
+    cpuMhz: "240",
+    cores: "2",
+    freeHeap: "184 KB",
+    minHeap: "150 KB",
+    uptime: "demo session",
+    wifiRssi: "-54 dBm",
+    ip: "192.168.1.42",
+    mqttState: simulated ? "Simulator Live" : debugSnapshot.mqttState,
+    systemState: simState.pumpState === "ON" ? "filling" : "idle",
+    pumpState: simState.pumpState,
+    pumpMode: simState.mode,
+    sensorRaw: `level=${simState.level.toFixed(1)}, voltage=${simState.voltage.toFixed(0)}`,
+    sensorUpdatedAt: new Date().toLocaleTimeString(),
+    ultrasonicDistance: `${(120 - simState.level).toFixed(1)} cm`,
+    waterLevelRaw: `${simState.level.toFixed(1)}%`,
+    waterLevelSmooth: `${simState.level.toFixed(1)}%`,
+    voltage: `${Math.round(simState.voltage)}V`,
+    resetReason: "software restart",
+    taskLag: "< 50 ms",
+    heartbeat: "healthy",
+    mqttReconnects: "0",
+    errorFlags: simState.leakScore >= 4 ? "LEAK_SUSPECT" : "none",
+    lastAlert: activeAlerts[0]?.message || "none"
+  };
+}
+
+function initializeAdminDebugPanel() {
+  renderDebugPanel();
+
+  const drawer = document.getElementById("admin-debug-drawer");
+  const openBtn = document.getElementById("admin-debug-open-btn");
+  const closeBtn = document.getElementById("admin-debug-close-btn");
+  const form = document.getElementById("admin-login-form");
+  const lockBtn = document.getElementById("admin-debug-lock-btn");
+  const refreshBtn = document.getElementById("admin-debug-refresh-btn");
+  const existingAuth = loadAdminAuth();
+
+  document.getElementById("admin-login-btn").textContent = existingAuth ? "Unlock Debug" : "Create Admin";
+  document.getElementById("admin-security-note").textContent = existingAuth
+    ? "Admin unlock is local to this browser. Firmware must reject debug data unless its own admin check passes."
+    : "First unlock creates a local salted password hash in this browser. Firmware must still enforce the same admin gate before exposing real debug data.";
+
+  const session = loadAdminSession();
+  if (session) setAdminUnlocked(true, session.username);
+
+  openBtn.addEventListener("click", () => {
+    playClickSound();
+    drawer.classList.remove("closed");
+  });
+
+  closeBtn.addEventListener("click", () => {
+    playClickSound();
+    drawer.classList.add("closed");
+  });
+
+  lockBtn.addEventListener("click", () => {
+    playClickSound();
+    sessionStorage.removeItem(ADMIN_SESSION_KEY);
+    setAdminUnlocked(false);
+  });
+
+  refreshBtn.addEventListener("click", () => {
+    playClickSound();
+    requestDebugSnapshot();
+  });
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    playClickSound();
+
+    if (!window.crypto?.subtle) {
+      alert("Admin password hashing requires a modern browser with Web Crypto.");
+      return;
+    }
+
+    const username = document.getElementById("admin-username").value.trim() || "admin";
+    const password = document.getElementById("admin-password").value;
+    if (password.length < 8) {
+      alert("Use at least 8 characters for the admin password.");
+      return;
+    }
+
+    let auth = loadAdminAuth();
+    if (!auth) {
+      auth = { username, salt: randomHex(16), hash: "" };
+      auth.hash = await hashAdminPassword(username, password, auth.salt);
+      localStorage.setItem(ADMIN_AUTH_KEY, JSON.stringify(auth));
+    } else if (auth.username !== username) {
+      alert("Admin username does not match this browser's configured admin.");
+      return;
+    } else {
+      const hash = await hashAdminPassword(username, password, auth.salt);
+      if (hash !== auth.hash) {
+        alert("Admin password is incorrect.");
+        return;
+      }
+    }
+
+    document.getElementById("admin-password").value = "";
+    saveAdminSession(username);
+    setAdminUnlocked(true, username);
+    requestDebugSnapshot();
+  });
 }
 
 // ── MQTT Client Management ──────────────────────────────────────────
@@ -297,7 +695,8 @@ function connectMQTT() {
       "water_tank/level", "water_tank/pump", "water_tank/voltage",
       "water_tank/alert", "water_tank/usage", "water_tank/mode",
       "water_tank/status", "water_tank/fsm_state", "water_tank/health",
-      "water_tank/leak", "water_tank/fill_eta", "water_tank/leak_score"
+      "water_tank/leak", "water_tank/fill_eta", "water_tank/leak_score",
+      "water_tank/debug", "water_tank/admin/debug"
     ];
     
     topics.forEach(topic => {
@@ -391,6 +790,7 @@ function handleBrokerPayload(topic, msg) {
       break;
     case "water_tank/pump":
       updatePumpUI(msg);
+      updateDebugSnapshot({ pumpState: msg });
       break;
     case "water_tank/voltage":
       updateVoltageUI(parseFloat(msg));
@@ -400,6 +800,7 @@ function handleBrokerPayload(topic, msg) {
       break;
     case "water_tank/mode":
       updateModeUI(msg);
+      updateDebugSnapshot({ pumpMode: msg });
       break;
     case "water_tank/fill_eta":
       updateEtaUI(parseFloat(msg));
@@ -416,6 +817,14 @@ function handleBrokerPayload(topic, msg) {
     case "water_tank/health":
       handleHealthPayload(msg);
       break;
+    case "water_tank/status":
+    case "water_tank/fsm_state":
+      updateDebugSnapshot({ systemState: msg });
+      break;
+    case "water_tank/debug":
+    case "water_tank/admin/debug":
+      handleDebugPayload(msg);
+      break;
     default:
       break;
   }
@@ -428,12 +837,17 @@ function handleHealthPayload(msg) {
     const runSecs = parseInt(parts[0]);
     const cycles = parseInt(parts[1]);
     console.log(`Motor health: cycles=${cycles}, runTime=${runSecs}s`);
+    updateDebugSnapshot({ uptime: `${runSecs}s`, heartbeat: `cycles=${cycles}` });
   }
 }
 
 // ── UI Telemetry Updates ──────────────────────────────────────────────
 function updateLevelUI(level) {
   level = Math.max(0, Math.min(100, level));
+  updateDebugSnapshot({
+    waterLevelSmooth: `${level.toFixed(1)}%`,
+    waterLevelRaw: `${level.toFixed(1)}%`
+  });
   
   // Set percentage string
   document.getElementById("level-percentage").textContent = `${Math.round(level)}%`;
@@ -515,6 +929,7 @@ function updatePumpUI(state) {
 
 function updateVoltageUI(volts) {
   document.getElementById("voltage-val").textContent = `${Math.round(volts)}V`;
+  updateDebugSnapshot({ voltage: `${Math.round(volts)}V` });
   
   const statusPill = document.getElementById("voltage-status-pill");
   const card = document.getElementById("voltage-card");
@@ -537,10 +952,8 @@ function updateVoltageUI(volts) {
 
 function updateUsageUI(litres) {
   document.getElementById("daily-usage-val").textContent = `${Math.round(litres)} L`;
-  
-  // Spread usage roughly into analytics hourly usage tracker
-  const hr = new Date().getHours();
-  hourlyUsageData[hr] = litres;
+
+  recordHourlyUsage(litres);
   if (usageChart) {
     usageChart.update();
   }
@@ -609,6 +1022,7 @@ function updateConnectionPill(state, text) {
   
   pill.className = `status-pill ${state}`;
   label.textContent = text;
+  updateDebugSnapshot({ mqttState: text });
 }
 
 // ── High-Fidelity Alert Feed Injection ──────────────────────────────────

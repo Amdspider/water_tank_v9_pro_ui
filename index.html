@@ -49,6 +49,10 @@
       <button id="settings-open-btn" class="settings-text-btn" type="button">
         <span>Connection</span>
       </button>
+
+      <button id="admin-debug-open-btn" class="settings-text-btn admin-text-btn" type="button">
+        <span>Admin Debug</span>
+      </button>
       
       <button id="settings-toggle-btn" class="icon-btn" aria-label="Toggle connection settings">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -70,7 +74,7 @@
   <section id="settings-panel" class="settings-drawer collapsed">
     <div class="drawer-header">
       <h2>HIVEMQ CLOUD CONNECTION</h2>
-      <p>Enter HiveMQ password and private command details here. They stay only in this browser.</p>
+      <p>Enter HiveMQ password and private command details here. They are used only for this page session and are not saved.</p>
     </div>
     <form id="connection-form">
       <div class="form-grid">
@@ -339,6 +343,67 @@
       <!-- Notifications list injected via app.js -->
       <ul id="alerts-list" class="alerts-list hidden"></ul>
     </div>
+  </aside>
+
+  <!-- Admin-only Debug Drawer -->
+  <aside id="admin-debug-drawer" class="admin-debug-sidebar closed">
+    <div class="drawer-header">
+      <div class="title-row">
+        <h2>ADMIN DEBUG PANEL</h2>
+        <button id="admin-debug-close-btn" class="icon-btn" aria-label="Close admin debug panel">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M18 6 6 18M6 6l12 12"/>
+          </svg>
+        </button>
+      </div>
+      <p id="admin-debug-subtitle">Locked diagnostics for trusted maintenance only.</p>
+    </div>
+
+    <section id="admin-login-panel" class="admin-login-panel">
+      <form id="admin-login-form" class="admin-login-form">
+        <div class="input-group">
+          <label for="admin-username">Admin Username</label>
+          <input type="text" id="admin-username" autocomplete="username" placeholder="admin">
+        </div>
+        <div class="input-group">
+          <label for="admin-password">Admin Password</label>
+          <input type="password" id="admin-password" autocomplete="current-password" placeholder="Set or enter password">
+        </div>
+        <button type="submit" id="admin-login-btn" class="btn primary">Unlock Debug</button>
+      </form>
+      <p class="admin-security-note" id="admin-security-note">
+        First unlock creates a local salted password hash in this browser. Firmware must still enforce the same admin gate before exposing real debug data.
+      </p>
+    </section>
+
+    <section id="admin-debug-content" class="admin-debug-content hidden">
+      <div class="admin-debug-actions">
+        <span id="admin-session-label" class="pill secure">Admin unlocked</span>
+        <button id="admin-debug-refresh-btn" type="button" class="btn secondary">Request Snapshot</button>
+        <button id="admin-debug-lock-btn" type="button" class="btn text-btn warning-text">Lock</button>
+      </div>
+
+      <div class="debug-summary-grid">
+        <div class="debug-summary-item">
+          <span>System</span>
+          <strong id="debug-system-state">--</strong>
+        </div>
+        <div class="debug-summary-item">
+          <span>Pump</span>
+          <strong id="debug-pump-state">--</strong>
+        </div>
+        <div class="debug-summary-item">
+          <span>MQTT</span>
+          <strong id="debug-mqtt-state">--</strong>
+        </div>
+        <div class="debug-summary-item">
+          <span>RSSI</span>
+          <strong id="debug-wifi-rssi">--</strong>
+        </div>
+      </div>
+
+      <div id="debug-fields-grid" class="debug-fields-grid"></div>
+    </section>
   </aside>
 
   <!-- Interactive Sound Effects (Optional Click feedback) -->

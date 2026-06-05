@@ -21,7 +21,7 @@ Username: spider.home
 Password: your HiveMQ Cloud password
 ```
 
-The password is not hardcoded in the app. It is saved only in the browser local storage after you enter it.
+The password is not hardcoded in the app and is not saved in browser storage. Enter it each time you open the dashboard.
 
 ## ESP32 Topics
 
@@ -40,6 +40,8 @@ water_tank/leak
 water_tank/leak_score
 water_tank/alert
 water_tank/health
+water_tank/debug
+water_tank/admin/debug
 ```
 
 The dashboard publishes commands to:
@@ -48,6 +50,7 @@ The dashboard publishes commands to:
 water_tank/cmd/pump
 water_tank/cmd/mode
 water_tank/cmd/reset
+water_tank/cmd/debug
 ```
 
 Your ESP32 firmware requires command payloads in this format:
@@ -57,6 +60,18 @@ COMMAND|HMAC_SHA256
 ```
 
 So pump/mode/restart controls need the same HMAC secret used by the ESP32 sketch. Enter it in the app settings as `Command HMAC Secret`.
+
+## Admin Debug Panel
+
+The web app includes an admin-only debug drawer. First unlock creates a local salted password hash in the browser, and later unlocks use that hash instead of storing the password directly.
+
+The panel can render firmware snapshots from `water_tank/debug` or `water_tank/admin/debug` as JSON. It expects fields such as firmware/build date, chip model, heap, uptime, WiFi RSSI/IP, MQTT state, FSM state, pump state/mode, raw sensor values, ultrasonic distance, raw/smoothed level, voltage/PZEM data, reset reason, heartbeat/task lag, MQTT reconnect count, error flags, and last alert reason.
+
+Important: this browser-side lock only protects the UI. The ESP32 firmware should still enforce admin authentication before publishing real debug data.
+
+## Water Analytics
+
+The hourly usage chart stores per-hour water usage in browser local storage for the current day. Incoming `water_tank/usage` values are treated as a daily cumulative litre total; the app records only the positive delta into the current hour.
 
 ## Run
 
