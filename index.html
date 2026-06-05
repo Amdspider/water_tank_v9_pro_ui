@@ -47,10 +47,19 @@
       </div>
 
       <button id="settings-open-btn" class="settings-text-btn" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M10.5 20.5 20 11l-7-7-9.5 9.5V20h6.5z"/>
+          <path d="M13 6l5 5"/>
+        </svg>
         <span>Connection</span>
       </button>
 
       <button id="admin-debug-open-btn" class="settings-text-btn admin-text-btn" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+          <path d="M9 12h6"/>
+          <path d="M12 9v6"/>
+        </svg>
         <span>Admin Debug</span>
       </button>
       
@@ -74,7 +83,7 @@
   <section id="settings-panel" class="settings-drawer collapsed">
     <div class="drawer-header">
       <h2>HIVEMQ CLOUD CONNECTION</h2>
-      <p>Enter HiveMQ password and private command details here. They are used only for this page session and are not saved.</p>
+      <p>Private values can be remembered for reconnect, but saved secrets are never shown back in the fields.</p>
     </div>
     <form id="connection-form">
       <div class="form-grid">
@@ -99,7 +108,7 @@
         <div class="input-group">
           <label for="mqtt-pass">HiveMQ Password</label>
           <div class="password-wrapper">
-            <input type="password" id="mqtt-pass" required placeholder="••••••••••••••">
+            <input type="password" id="mqtt-pass" placeholder="Enter HiveMQ password">
             <button type="button" id="toggle-password-btn" class="password-toggle">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="eye-open">
                 <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
@@ -124,6 +133,10 @@
             </button>
           </div>
         </div>
+        <label class="checkbox-row">
+          <input type="checkbox" id="remember-secrets" checked>
+          <span>Remember private details on this device</span>
+        </label>
       </div>
       <div class="form-actions">
         <button type="button" id="reset-defaults-btn" class="btn secondary">Reset Defaults</button>

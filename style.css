@@ -82,8 +82,7 @@ body {
 
 /* App Header */
 .app-header {
-  position: sticky;
-  top: 0;
+  position: relative;
   z-index: 100;
   display: flex;
   justify-content: space-between;
@@ -142,6 +141,15 @@ body {
   letter-spacing: 0.3px;
   cursor: pointer;
   transition: var(--spring-transition);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+}
+
+.settings-text-btn svg {
+  width: 15px;
+  height: 15px;
 }
 
 .settings-text-btn:hover {
@@ -206,6 +214,16 @@ body {
   letter-spacing: 0.5px;
   border: 1px solid transparent;
   transition: var(--spring-transition);
+  cursor: pointer;
+}
+
+.status-pill:hover {
+  filter: brightness(1.15);
+  transform: scale(1.02);
+}
+
+.status-pill:active {
+  transform: scale(0.98);
 }
 
 .status-dot {
@@ -416,6 +434,22 @@ body {
   display: flex;
   justify-content: flex-end;
   gap: 1rem;
+}
+
+.checkbox-row {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.checkbox-row input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent-green);
 }
 
 /* Premium Buttons */
@@ -1403,19 +1437,55 @@ body {
 
 @media (max-width: 600px) {
   .app-header {
-    flex-wrap: wrap;
-    gap: 0.8rem;
-    padding: 0.9rem 1rem;
+    position: relative !important;
+    height: 54px;
+    padding: 0 0.8rem;
+    gap: 0.4rem;
+    display: flex;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .logo-text {
+    display: none;
+  }
+  .logo-icon {
+    width: 24px;
+    height: 24px;
   }
   .header-status {
-    width: 100%;
-    justify-content: flex-start;
-    flex-wrap: wrap;
-    gap: 0.55rem;
+    display: flex;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: 0.4rem;
+    justify-content: flex-end;
   }
-  .status-pill,
-  .settings-text-btn {
+  .status-pill {
+    width: 38px;
+    height: 38px;
+    padding: 0;
+    justify-content: center;
+  }
+  .status-pill #connection-status-text {
+    display: none;
+  }
+  .settings-text-btn,
+  .icon-btn {
+    width: 38px;
+    height: 38px;
+    min-width: 38px;
     min-height: 38px;
+    padding: 0;
+    border-radius: 50%;
+  }
+  .settings-text-btn span {
+    display: none;
+  }
+  .settings-text-btn svg {
+    width: 17px;
+    height: 17px;
   }
   .settings-drawer {
     max-height: 78vh;

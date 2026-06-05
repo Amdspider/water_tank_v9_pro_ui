@@ -8,7 +8,8 @@ const DEFAULT_CONFIG = {
   user: 'spider.home',
   pass: '',
   hmacSecret: '',
-  clientId: 'spider-web-' + Math.random().toString(16).substring(2, 8)
+  clientId: 'spider-web-' + Math.random().toString(16).substring(2, 8),
+  rememberSecrets: true
 };
 
 // Global App State
@@ -31,7 +32,7 @@ let usageAnalyticsDate = currentDateKey();
 const USAGE_ANALYTICS_KEY = "spider_hourly_usage_v1";
 const ADMIN_AUTH_KEY = "spider_admin_auth_v1";
 const ADMIN_SESSION_KEY = "spider_admin_session_v1";
-const ADMIN_SESSION_TTL_MS = 15 * 60 * 1000;
+const ADMIN_SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days session TTL
 
 const debugSnapshot = {
   firmware: "--",
@@ -139,6 +140,19 @@ document.addEventListener("DOMContentLoaded", () => {
     settingsPanel.classList.remove("collapsed");
   });
 
+  // Reconnect / Toggle settings drawer when clicking connection status pill
+  const statusPill = document.getElementById("connection-status-pill");
+  if (statusPill) {
+    statusPill.addEventListener("click", () => {
+      playClickSound();
+      if (!client || !client.connected) {
+        connectMQTT();
+      } else {
+        settingsPanel.classList.toggle("collapsed");
+      }
+    });
+  }
+
   // Alerts sidebar toggle
   const alertsBtn = document.getElementById("alerts-toggle-btn");
   const alertsCloseBtn = document.getElementById("alerts-close-btn");
@@ -203,11 +217,20 @@ document.addEventListener("DOMContentLoaded", () => {
     config.port = parseInt(document.getElementById("mqtt-port").value.trim());
     config.path = document.getElementById("mqtt-path").value.trim();
     config.user = document.getElementById("mqtt-user").value.trim();
-    config.pass = document.getElementById("mqtt-pass").value.trim();
-    config.hmacSecret = document.getElementById("mqtt-hmac-secret").value.trim();
+    const nextPass = document.getElementById("mqtt-pass").value.trim();
+    const nextHmac = document.getElementById("mqtt-hmac-secret").value.trim();
+    config.pass = nextPass || config.pass;
+    config.hmacSecret = nextHmac || config.hmacSecret;
     config.clientId = document.getElementById("mqtt-client-id").value.trim();
+    config.rememberSecrets = document.getElementById("remember-secrets").checked;
+
+    if (!config.pass) {
+      alert("Enter the HiveMQ password once, or keep a remembered password on this device.");
+      return;
+    }
     
     saveConfig();
+    populateForm();
     settingsPanel.classList.add("collapsed");
     connectMQTT();
   });
@@ -285,12 +308,11 @@ function loadConfig() {
       const parsed = JSON.parse(saved);
       config = {
         ...DEFAULT_CONFIG,
-        ...parsed,
-        pass: "",
-        hmacSecret: ""
+        ...parsed
       };
-      if (parsed.pass || parsed.hmacSecret) {
-        saveConfig();
+      if (config.rememberSecrets === false) {
+        config.pass = "";
+        config.hmacSecret = "";
       }
     } catch (e) {
       config = { ...DEFAULT_CONFIG };
@@ -304,8 +326,13 @@ function saveConfig() {
     port: config.port,
     path: config.path,
     user: config.user,
-    clientId: config.clientId
+    clientId: config.clientId,
+    rememberSecrets: config.rememberSecrets
   };
+  if (config.rememberSecrets) {
+    safeConfig.pass = config.pass;
+    safeConfig.hmacSecret = config.hmacSecret;
+  }
   localStorage.setItem("spider_config", JSON.stringify(safeConfig));
   localStorage.removeItem("aquafsm_config");
 }
@@ -317,7 +344,15 @@ function populateForm() {
   document.getElementById("mqtt-user").value = config.user;
   document.getElementById("mqtt-pass").value = "";
   document.getElementById("mqtt-hmac-secret").value = "";
+  const canReuseSecrets = config.rememberSecrets !== false;
+  document.getElementById("mqtt-pass").placeholder = canReuseSecrets && config.pass
+    ? "Saved password - leave blank to keep"
+    : "Enter HiveMQ password";
+  document.getElementById("mqtt-hmac-secret").placeholder = canReuseSecrets && config.hmacSecret
+    ? "Saved HMAC secret - leave blank to keep"
+    : "Required only for pump/mode control";
   document.getElementById("mqtt-client-id").value = config.clientId;
+  document.getElementById("remember-secrets").checked = config.rememberSecrets !== false;
 }
 
 // Hourly water analytics are stored locally so refreshes do not erase the day.
@@ -486,7 +521,7 @@ function loadAdminAuth() {
 }
 
 function saveAdminSession(username) {
-  sessionStorage.setItem(ADMIN_SESSION_KEY, JSON.stringify({
+  localStorage.setItem(ADMIN_SESSION_KEY, JSON.stringify({
     username,
     expiresAt: Date.now() + ADMIN_SESSION_TTL_MS
   }));
@@ -494,10 +529,10 @@ function saveAdminSession(username) {
 
 function loadAdminSession() {
   try {
-    const session = JSON.parse(sessionStorage.getItem(ADMIN_SESSION_KEY) || "null");
+    const session = JSON.parse(localStorage.getItem(ADMIN_SESSION_KEY) || "null");
     if (session && session.expiresAt > Date.now()) return session;
   } catch (e) {}
-  sessionStorage.removeItem(ADMIN_SESSION_KEY);
+  localStorage.removeItem(ADMIN_SESSION_KEY);
   return null;
 }
 
@@ -585,7 +620,7 @@ function initializeAdminDebugPanel() {
 
   lockBtn.addEventListener("click", () => {
     playClickSound();
-    sessionStorage.removeItem(ADMIN_SESSION_KEY);
+    localStorage.removeItem(ADMIN_SESSION_KEY);
     setAdminUnlocked(false);
   });
 
