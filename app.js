@@ -9,7 +9,8 @@ const DEFAULT_CONFIG = {
   pass: '',
   hmacSecret: '',
   clientId: 'spider-web-' + Math.random().toString(16).substring(2, 8),
-  rememberSecrets: true
+  rememberSecrets: true,
+  voiceEnabled: false
 };
 
 // Global App State
@@ -30,9 +31,16 @@ let lastUsageTotal = null;
 let usageAnalyticsDate = currentDateKey();
 
 const USAGE_ANALYTICS_KEY = "spider_hourly_usage_v1";
+const USAGE_HISTORY_KEY = "spider_usage_history_v1";
 const ADMIN_AUTH_KEY = "spider_admin_auth_v1";
 const ADMIN_SESSION_KEY = "spider_admin_session_v1";
 const ADMIN_SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days session TTL
+const TANK_CAPACITY_LITRES = 700;
+const TANK_HEIGHT_CM = 93;
+const SENSOR_OFFSET_CM = 5;
+const LOW_LEVEL_THRESHOLD = 20;
+const HIGH_LEVEL_THRESHOLD = 94;
+const AUTO_START_MAX_LEVEL = 25;
 
 const debugSnapshot = {
   firmware: "--",
@@ -104,14 +112,14 @@ function playClickSound() {
     const gain = audioCtx.createGain();
     osc.connect(gain);
     gain.connect(audioCtx.destination);
-    
+
     osc.type = 'sine';
     osc.frequency.setValueAtTime(1400, audioCtx.currentTime);
     osc.frequency.exponentialRampToValueAtTime(800, audioCtx.currentTime + 0.1);
-    
+
     gain.gain.setValueAtTime(0.05, audioCtx.currentTime);
     gain.gain.linearRampToValueAtTime(0.001, audioCtx.currentTime + 0.1);
-    
+
     osc.start();
     osc.stop(audioCtx.currentTime + 0.1);
   } catch (e) {
@@ -126,7 +134,8 @@ document.addEventListener("DOMContentLoaded", () => {
   populateForm();
   initializeCharts();
   initializeAdminDebugPanel();
-  
+  initializeUsageHistory();
+
   // Settings drawer toggle
   const settingsBtn = document.getElementById("settings-toggle-btn");
   const settingsOpenBtn = document.getElementById("settings-open-btn");
@@ -153,11 +162,29 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
+  // Voice Alerts toggle listener
+  const voiceToggle = document.getElementById("voice-alerts-toggle");
+  voiceToggle.checked = config.voiceEnabled;
+  voiceToggle.addEventListener("change", (e) => {
+    config.voiceEnabled = e.target.checked;
+    saveConfig();
+    if (config.voiceEnabled) speakMessage("Voice alerts enabled");
+  });
+
+  // CSV Export listener
+  const exportBtn = document.getElementById("export-data-btn");
+  if (exportBtn) {
+    exportBtn.addEventListener("click", () => {
+      playClickSound();
+      exportUsageHistoryCSV();
+    });
+  }
+
   // Alerts sidebar toggle
   const alertsBtn = document.getElementById("alerts-toggle-btn");
   const alertsCloseBtn = document.getElementById("alerts-close-btn");
   const alertsSidebar = document.getElementById("alerts-drawer");
-  
+
   alertsBtn.addEventListener("click", () => {
     playClickSound();
     alertsSidebar.classList.toggle("closed");
@@ -165,7 +192,7 @@ document.addEventListener("DOMContentLoaded", () => {
     document.getElementById("notification-badge").classList.add("hidden");
     document.getElementById("notification-badge").textContent = "0";
   });
-  
+
   alertsCloseBtn.addEventListener("click", () => {
     playClickSound();
     alertsSidebar.classList.add("closed");
@@ -212,7 +239,7 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("connection-form").addEventListener("submit", (e) => {
     e.preventDefault();
     playClickSound();
-    
+
     config.host = document.getElementById("mqtt-host").value.trim();
     config.port = parseInt(document.getElementById("mqtt-port").value.trim());
     config.path = document.getElementById("mqtt-path").value.trim();
@@ -228,7 +255,7 @@ document.addEventListener("DOMContentLoaded", () => {
       alert("Enter the HiveMQ password once, or keep a remembered password on this device.");
       return;
     }
-    
+
     saveConfig();
     populateForm();
     settingsPanel.classList.add("collapsed");
@@ -241,7 +268,7 @@ document.addEventListener("DOMContentLoaded", () => {
     playClickSound();
     const isRunning = pumpBtn.classList.contains("active");
     const nextState = isRunning ? "OFF" : "ON";
-    
+
     if (simulated) {
       updatePumpUI(nextState);
     } else {
@@ -360,38 +387,50 @@ function currentDateKey() {
   return new Date().toISOString().slice(0, 10);
 }
 
-function loadUsageAnalytics() {
-  const saved = localStorage.getItem(USAGE_ANALYTICS_KEY);
-  if (!saved) return;
+let usageHistory = {};
+let viewingDate = currentDateKey();
 
-  try {
-    const parsed = JSON.parse(saved);
-    if (parsed.date === currentDateKey() && Array.isArray(parsed.hourly)) {
-      hourlyUsageData = parsed.hourly.slice(0, 24).map(v => Number(v) || 0);
-      while (hourlyUsageData.length < 24) hourlyUsageData.push(0);
-      lastUsageTotal = Number.isFinite(parsed.lastTotal) ? parsed.lastTotal : null;
-      usageAnalyticsDate = parsed.date;
+function loadUsageAnalytics() {
+  const saved = localStorage.getItem(USAGE_HISTORY_KEY);
+  if (saved) {
+    try {
+      usageHistory = JSON.parse(saved);
+    } catch (e) {
+      usageHistory = {};
     }
-  } catch (e) {
-    hourlyUsageData = Array(24).fill(0);
-    lastUsageTotal = null;
   }
+
+  // Backward compatibility migration from single-day storage
+  const legacy = localStorage.getItem(USAGE_ANALYTICS_KEY);
+  if (legacy && Object.keys(usageHistory).length === 0) {
+    try {
+      const parsed = JSON.parse(legacy);
+      if (parsed.date && Array.isArray(parsed.hourly)) {
+        usageHistory[parsed.date] = {
+          hourly: parsed.hourly,
+          lastTotal: parsed.lastTotal
+        };
+        saveUsageAnalytics();
+      }
+    } catch (e) { }
+  }
+
+  ensureUsageDateIsCurrent();
+  hourlyUsageData = usageHistory[currentDateKey()].hourly;
+  lastUsageTotal = usageHistory[currentDateKey()].lastTotal;
 }
 
 function saveUsageAnalytics() {
-  localStorage.setItem(USAGE_ANALYTICS_KEY, JSON.stringify({
-    date: usageAnalyticsDate,
-    hourly: hourlyUsageData,
-    lastTotal: lastUsageTotal
-  }));
+  localStorage.setItem(USAGE_HISTORY_KEY, JSON.stringify(usageHistory));
 }
 
 function ensureUsageDateIsCurrent() {
   const today = currentDateKey();
-  if (usageAnalyticsDate !== today) {
-    usageAnalyticsDate = today;
-    hourlyUsageData = Array(24).fill(0);
-    lastUsageTotal = null;
+  if (!usageHistory[today]) {
+    usageHistory[today] = {
+      hourly: Array(24).fill(0),
+      lastTotal: null
+    };
     saveUsageAnalytics();
   }
 }
@@ -399,17 +438,60 @@ function ensureUsageDateIsCurrent() {
 function recordHourlyUsage(totalLitres) {
   if (!Number.isFinite(totalLitres)) return;
 
+  const today = currentDateKey();
   ensureUsageDateIsCurrent();
+
   const hr = new Date().getHours();
   let delta = 0;
+  const dayData = usageHistory[today];
 
-  if (lastUsageTotal !== null) {
-    delta = totalLitres >= lastUsageTotal ? totalLitres - lastUsageTotal : totalLitres;
+  if (dayData.lastTotal !== null) {
+    delta = totalLitres >= dayData.lastTotal ? totalLitres - dayData.lastTotal : totalLitres;
   }
 
-  hourlyUsageData[hr] = Number((hourlyUsageData[hr] + Math.max(0, delta)).toFixed(2));
-  lastUsageTotal = totalLitres;
+  dayData.hourly[hr] = Number((dayData.hourly[hr] + Math.max(0, delta)).toFixed(2));
+  dayData.lastTotal = totalLitres;
+
+  if (viewingDate === today) {
+    hourlyUsageData = dayData.hourly;
+    lastUsageTotal = dayData.lastTotal;
+    if (usageChart) {
+      usageChart.data.datasets[0].data = hourlyUsageData;
+      usageChart.update('none');
+    }
+    updateUsageUI(getDailyTotal(today));
+  }
+
   saveUsageAnalytics();
+}
+
+function getDailyTotal(date) {
+  const data = usageHistory[date];
+  if (!data || !data.hourly) return 0;
+  return data.hourly.reduce((a, b) => a + b, 0).toFixed(1);
+}
+
+function switchUsageDate(date) {
+  viewingDate = date;
+  const isToday = date === currentDateKey();
+  const label = document.getElementById("selected-date-label");
+  if (label) label.textContent = isToday ? "Today" : date;
+
+  const usagePill = document.querySelector(".usage-pill");
+  if (usagePill) usagePill.textContent = isToday ? "Today" : "History";
+
+  if (!usageHistory[date]) {
+    hourlyUsageData = Array(24).fill(0);
+  } else {
+    hourlyUsageData = usageHistory[date].hourly;
+  }
+
+  if (usageChart) {
+    usageChart.data.datasets[0].data = hourlyUsageData;
+    usageChart.update();
+  }
+
+  updateUsageUI(getDailyTotal(date));
 }
 
 function formatDebugValue(value) {
@@ -531,7 +613,7 @@ function loadAdminSession() {
   try {
     const session = JSON.parse(localStorage.getItem(ADMIN_SESSION_KEY) || "null");
     if (session && session.expiresAt > Date.now()) return session;
-  } catch (e) {}
+  } catch (e) { }
   localStorage.removeItem(ADMIN_SESSION_KEY);
   return null;
 }
@@ -576,7 +658,7 @@ function makeSimulatedDebugSnapshot() {
     pumpMode: simState.mode,
     sensorRaw: `level=${simState.level.toFixed(1)}, voltage=${simState.voltage.toFixed(0)}`,
     sensorUpdatedAt: new Date().toLocaleTimeString(),
-    ultrasonicDistance: `${(120 - simState.level).toFixed(1)} cm`,
+    ultrasonicDistance: `${(SENSOR_OFFSET_CM + TANK_HEIGHT_CM - ((simState.level / 100) * TANK_HEIGHT_CM)).toFixed(1)} cm`,
     waterLevelRaw: `${simState.level.toFixed(1)}%`,
     waterLevelSmooth: `${simState.level.toFixed(1)}%`,
     voltage: `${Math.round(simState.voltage)}V`,
@@ -671,11 +753,11 @@ function initializeAdminDebugPanel() {
 // ── MQTT Client Management ──────────────────────────────────────────
 function connectMQTT() {
   stopSimulation();
-  
+
   if (client) {
-    try { client.end(); } catch(e){}
+    try { client.end(); } catch (e) { }
   }
-  
+
   if (!window.mqtt) {
     updateConnectionPill("disconnected", "MQTT lib missing");
     injectAlert("CRITICAL", "App Library Missing", "MQTT.js did not load. Check internet access or host the library locally.");
@@ -689,7 +771,7 @@ function connectMQTT() {
   }
 
   updateConnectionPill("connecting", "Connecting...");
-  
+
   const options = {
     clientId: config.clientId,
     username: config.user,
@@ -698,10 +780,10 @@ function connectMQTT() {
     connectTimeout: 7000,
     reconnectPeriod: 5000
   };
-  
+
   const brokerUrl = `wss://${config.host}:${config.port}${config.path}`;
   console.log(`Connecting to secure WSS broker: ${brokerUrl}`);
-  
+
   try {
     client = mqtt.connect(brokerUrl, options);
   } catch (err) {
@@ -710,7 +792,7 @@ function connectMQTT() {
     injectAlert("WARNING", "MQTT Connection Refused", err?.message || "Could not open the WebSocket connection.");
     return;
   }
-  
+
   // Timeout monitor with clear feedback. No fake data is shown on failure.
   const connectTimer = setTimeout(() => {
     if (client && !client.connected) {
@@ -719,12 +801,12 @@ function connectMQTT() {
       injectAlert("WARNING", "MQTT Timeout", "Could not connect. Check host, WSS port 8884, path /mqtt, username, and password.");
     }
   }, 8000);
-  
+
   client.on("connect", () => {
     clearTimeout(connectTimer);
     console.log("Connected directly to HiveMQ Cloud WSS");
     updateConnectionPill("connected", "Connected");
-    
+
     // Subscribe to all tank telemetry topics
     const topics = [
       "water_tank/level", "water_tank/pump", "water_tank/voltage",
@@ -733,27 +815,27 @@ function connectMQTT() {
       "water_tank/leak", "water_tank/fill_eta", "water_tank/leak_score",
       "water_tank/debug", "water_tank/admin/debug"
     ];
-    
+
     topics.forEach(topic => {
       client.subscribe(topic, { qos: 0 }, (err) => {
         if (!err) console.log(`Subscribed: ${topic}`);
       });
     });
   });
-  
+
   client.on("message", (topic, payload) => {
     const msg = payload.toString().trim();
     console.log(`[MQTT Rx] ${topic}: ${msg}`);
     handleBrokerPayload(topic, msg);
   });
-  
+
   client.on("close", () => {
     console.warn("WSS Connection Closed");
     if (!simulated) {
       updateConnectionPill("disconnected", "Offline");
     }
   });
-  
+
   client.on("error", (err) => {
     console.error("MQTT Connection Error:", err);
     updateConnectionPill("disconnected", "Error");
@@ -855,6 +937,7 @@ function handleBrokerPayload(topic, msg) {
     case "water_tank/status":
     case "water_tank/fsm_state":
       updateDebugSnapshot({ systemState: msg });
+      updateFsmVisualizer(msg);
       break;
     case "water_tank/debug":
     case "water_tank/admin/debug":
@@ -883,23 +966,23 @@ function updateLevelUI(level) {
     waterLevelSmooth: `${level.toFixed(1)}%`,
     waterLevelRaw: `${level.toFixed(1)}%`
   });
-  
+
   // Set percentage string
   document.getElementById("level-percentage").textContent = `${Math.round(level)}%`;
-  
-  // Update volume (1000 litres capacity scale)
-  const volume = Math.round(level * 10);
+
+  // Update volume using the calibrated 700 L tank capacity.
+  const volume = Math.round((level / 100) * TANK_CAPACITY_LITRES);
   document.getElementById("volume-readout").textContent = `${volume} Litres`;
-  
+
   // SVG outer progress ring mapping (dashoffset goes from 534 to 0 as level goes 0 to 100)
   const ringOffset = 534 - (level * 534) / 100;
   const progressRing = document.getElementById("ring-progress-bar");
   progressRing.style.strokeDashoffset = ringOffset;
-  
+
   // Color code progress indicator based on level
-  if (level >= 90) {
+  if (level >= HIGH_LEVEL_THRESHOLD) {
     progressRing.style.stroke = "var(--accent-green)";
-  } else if (level >= 30) {
+  } else if (level >= LOW_LEVEL_THRESHOLD) {
     progressRing.style.stroke = "var(--accent-cyan)";
   } else if (level >= 10) {
     progressRing.style.stroke = "var(--accent-yellow)";
@@ -912,63 +995,61 @@ function updateLevelUI(level) {
   const waveTranslate = 180 - (level * 1.6);
   document.getElementById("wave-back").style.transform = `translateY(${waveTranslate}px)`;
   document.getElementById("wave-front").style.transform = `translateY(${waveTranslate}px)`;
-  
+
   // Push level records to the analytics line chart
   const now = new Date();
   const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-  
+
   levelHistory.push(level);
   timeLabels.push(timeStr);
-  
+
   // Cap at 15 samples
   if (levelHistory.length > 15) {
     levelHistory.shift();
     timeLabels.shift();
   }
-  
+
   if (levelChart) {
     levelChart.update();
   }
 }
 
 function updatePumpUI(state) {
-  const switchBtn = document.getElementById("pump-toggle-btn");
-  const label = document.getElementById("pump-state-label");
-  const robotAnim = document.getElementById("gauge-robot-anim");
+  const btn = document.getElementById("pump-toggle-btn");
+  const lbl = document.getElementById("pump-state-label");
   const waveFront = document.getElementById("wave-front");
   const waveBack = document.getElementById("wave-back");
-  
-  if (state === "ON" || state === "RUNNING") {
-    switchBtn.classList.add("active");
-    label.textContent = "PUMPING";
-    label.className = "pump-lbl-running";
-    robotAnim.classList.remove("hidden");
-    
-    // Speed up wave visual animation when pump is active
-    waveFront.style.animationDuration = "2s";
-    waveBack.style.animationDuration = "3.2s";
-  } else {
-    switchBtn.classList.remove("active");
-    label.textContent = "STOPPED";
-    label.className = "pump-lbl-stopped";
-    robotAnim.classList.add("hidden");
-    
-    // Slower calm waves when idle
-    waveFront.style.animationDuration = "4s";
-    waveBack.style.animationDuration = "6s";
-    
-    // Clear eta values
-    document.getElementById("fill-eta-val").textContent = "-- min";
+  const isRunning = state === "ON";
+
+  const prevState = btn.classList.contains("active") ? "ON" : "OFF";
+
+  btn.classList.toggle("active", isRunning);
+  lbl.textContent = isRunning ? "RUNNING" : "STOPPED";
+  lbl.className = isRunning ? "pump-lbl-running" : "pump-lbl-stopped";
+
+  // Logic to track pump activity in main gauge
+  const robot = document.getElementById("gauge-robot-anim");
+  if (robot) robot.classList.toggle("hidden", !isRunning);
+
+  // Speed adjustments for waves
+  if (waveFront && waveBack) {
+    waveFront.style.animationDuration = isRunning ? "2s" : "4s";
+    waveBack.style.animationDuration = isRunning ? "3.2s" : "6s";
+  }
+
+  // V-Alerts: Announce state change
+  if (state !== prevState && config.voiceEnabled) {
+    speakMessage(`Water pump is now ${isRunning ? "active" : "turned off"}`);
   }
 }
 
 function updateVoltageUI(volts) {
   document.getElementById("voltage-val").textContent = `${Math.round(volts)}V`;
   updateDebugSnapshot({ voltage: `${Math.round(volts)}V` });
-  
+
   const statusPill = document.getElementById("voltage-status-pill");
   const card = document.getElementById("voltage-card");
-  
+
   if (volts >= 180 && volts <= 250) {
     statusPill.textContent = "Safe Range";
     statusPill.className = "pill normal";
@@ -998,7 +1079,7 @@ function updateModeUI(mode) {
   document.getElementById("mode-auto-btn").classList.remove("active");
   document.getElementById("mode-manual-btn").classList.remove("active");
   document.getElementById("mode-maint-btn").classList.remove("active");
-  
+
   if (mode === "AUTO") {
     document.getElementById("mode-auto-btn").classList.add("active");
   } else if (mode === "MANUAL") {
@@ -1020,7 +1101,7 @@ function updateLeakUI(status) {
   const statusPill = document.getElementById("leak-status-val");
   const card = document.getElementById("leak-card");
   const footer = document.getElementById("leak-footer");
-  
+
   if (status === "CONFIRMED" || status === "LEAK" || status === "LEAK!") {
     statusPill.textContent = "LEAK ALERT";
     statusPill.style.color = "var(--accent-orange)";
@@ -1043,7 +1124,7 @@ function updateLeakUI(status) {
 function updateLeakScoreUI(score) {
   const badge = document.getElementById("leak-score-badge");
   badge.textContent = `Score: ${score}/6`;
-  
+
   if (score >= 4) {
     badge.className = "pill score-alert";
   } else {
@@ -1054,25 +1135,34 @@ function updateLeakScoreUI(score) {
 function updateConnectionPill(state, text) {
   const pill = document.getElementById("connection-status-pill");
   const label = document.getElementById("connection-status-text");
-  
+
   pill.className = `status-pill ${state}`;
   label.textContent = text;
   updateDebugSnapshot({ mqttState: text });
 }
 
 // ── High-Fidelity Alert Feed Injection ──────────────────────────────────
-function injectAlert(level, title, message) {
-  const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  
+function injectAlert(type, title, message) {
+  const id = Date.now();
+  const alert = { id, type, title, message, time: new Date().toLocaleTimeString() };
+  activeAlerts.unshift(alert);
+
+  // V-Alerts: Voice announcement for critical alerts
+  if (type === "CRITICAL" && config.voiceEnabled) {
+    speakMessage(`Warning: ${title}. ${message}`);
+  }
+
+  updateAlertsUI();
+
   // Deduplicate exact alerts within 10 seconds
   const duplicated = activeAlerts.find(a => a.message === message && (Date.now() - a.time) < 10000);
   if (duplicated) return;
-  
+
   activeAlerts.unshift({ level, title, message, timestamp, time: Date.now() });
   if (activeAlerts.length > 20) activeAlerts.pop();
-  
+
   renderAlertsFeed();
-  
+
   // Trigger notification indicator badge
   const badge = document.getElementById("notification-badge");
   const isSidebarOpen = !document.getElementById("alerts-drawer").classList.contains("closed");
@@ -1086,28 +1176,28 @@ function injectAlert(level, title, message) {
 function renderAlertsFeed() {
   const emptyFeed = document.getElementById("alerts-empty");
   const alertsList = document.getElementById("alerts-list");
-  
+
   if (activeAlerts.length === 0) {
     emptyFeed.classList.remove("hidden");
     alertsList.classList.add("hidden");
     return;
   }
-  
+
   emptyFeed.classList.add("hidden");
   alertsList.classList.remove("hidden");
   alertsList.innerHTML = "";
-  
+
   activeAlerts.forEach(alert => {
     const li = document.createElement("li");
     li.className = `alert-item ${alert.level.toLowerCase()}`;
-    
+
     let iconSvg = '';
     if (alert.level === 'CRITICAL') {
       iconSvg = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>`;
     } else {
       iconSvg = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>`;
     }
-    
+
     li.innerHTML = `
       <div class="alert-item-icon">${iconSvg}</div>
       <div class="alert-item-content">
@@ -1143,11 +1233,11 @@ function initializeCharts() {
 
   // 1. Water Level Trend Line Chart
   const ctxLvl = levelCanvas.getContext("2d");
-  
+
   const neonCyanGrad = ctxLvl.createLinearGradient(0, 0, 0, 200);
   neonCyanGrad.addColorStop(0, 'rgba(0, 210, 255, 0.25)');
   neonCyanGrad.addColorStop(1, 'rgba(0, 102, 204, 0.0)');
-  
+
   levelChart = new Chart(ctxLvl, {
     type: 'line',
     data: {
@@ -1189,7 +1279,7 @@ function initializeCharts() {
   // 2. Hourly Consumption Bar Chart
   const ctxUsg = usageCanvas.getContext("2d");
   const hourlyLabels = Array.from({ length: 24 }, (_, i) => `${i.toString().padStart(2, '0')}:00`);
-  
+
   usageChart = new Chart(ctxUsg, {
     type: 'bar',
     data: {
@@ -1228,10 +1318,10 @@ function triggerFallbackSimulation(reason) {
   console.log(`Initiating Integrated Local Simulator Engine (Reason: ${reason})`);
   simulated = true;
   updateConnectionPill("connecting", "Simulating FSM");
-  
+
   setTimeout(() => {
     updateConnectionPill("connected", "Simulator Live");
-    
+
     // Seed initial values matching a typical tank FSM setup
     simState.level = 45.0;
     simState.voltage = 232.0;
@@ -1240,7 +1330,7 @@ function triggerFallbackSimulation(reason) {
     simState.pumpState = "OFF";
     simState.leakScore = 0;
     simState.lpm = 14.8;
-    
+
     updateLevelUI(simState.level);
     updatePumpUI(simState.pumpState);
     updateVoltageUI(simState.voltage);
@@ -1249,8 +1339,9 @@ function triggerFallbackSimulation(reason) {
     updateEtaUI(0);
     updateLeakUI("SECURE");
     updateLeakScoreUI(0);
+    updateFsmVisualizer("IDLE");
     document.getElementById("learned-lpm-val").textContent = `${simState.lpm.toFixed(1)} LPM`;
-    
+
     startSimulationLoop();
   }, 1000);
 }
@@ -1267,13 +1358,13 @@ const simState = {
 
 function startSimulationLoop() {
   stopSimulation();
-  
+
   simulationInterval = setInterval(() => {
     // 1. Slightly fluctuate AC Grid Voltage
     simState.voltage += (Math.random() - 0.5) * 4;
     simState.voltage = Math.max(170, Math.min(260, simState.voltage));
     updateVoltageUI(simState.voltage);
-    
+
     // Occasional grid spike simulation
     if (Math.random() > 0.98) {
       simState.voltage = Math.random() > 0.5 ? 255.0 : 172.0;
@@ -1284,41 +1375,42 @@ function startSimulationLoop() {
     if (simState.pumpState === "ON") {
       // Pump adds water (learned lpm speed factor)
       const waterAdded = (simState.lpm / 60) * 2; // scale factor per ticks
-      const levelPctAdded = (waterAdded / 1000) * 100;
+      const levelPctAdded = (waterAdded / TANK_CAPACITY_LITRES) * 100;
       simState.level += levelPctAdded;
-      simState.usageToday += waterAdded;
-      updateUsageUI(simState.usageToday);
-      
-      // Calculate remaining minutes to hit cfg.highThr (90%)
-      if (simState.level < 90) {
-        const litresRemaining = ((90 - simState.level) / 100) * 1000;
+
+      // Calculate remaining minutes to hit cfg.highThr (94%)
+      if (simState.level < HIGH_LEVEL_THRESHOLD) {
+        const litresRemaining = ((HIGH_LEVEL_THRESHOLD - simState.level) / 100) * TANK_CAPACITY_LITRES;
         const eta = litresRemaining / simState.lpm;
         updateEtaUI(eta);
       } else {
         updateEtaUI(0);
       }
-      
-      // Auto cut-off at highThr (90%) in AUTO mode
-      if (simState.mode === "AUTO" && simState.level >= 90) {
+
+      // Auto cut-off at highThr (94%) in AUTO mode
+      if (simState.mode === "AUTO" && simState.level >= HIGH_LEVEL_THRESHOLD) {
         updatePumpUI("OFF");
         simState.pumpState = "OFF";
-        injectAlert("INFO", "Filling Complete", "Water tank reached top safety threshold (90%).");
+        injectAlert("INFO", "Filling Complete", `Water tank reached top safety threshold (${HIGH_LEVEL_THRESHOLD}%).`);
       }
     } else {
       // Slow standard consumption drop
-      simState.level -= 0.05 + (Math.random() * 0.05);
+      const levelDrop = 0.05 + (Math.random() * 0.05);
+      simState.level -= levelDrop;
       simState.level = Math.max(0, simState.level);
-      
-      // Auto start trigger at lowThr (30%) in AUTO mode
-      if (simState.mode === "AUTO" && simState.level <= 30) {
+      simState.usageToday += (levelDrop / 100) * TANK_CAPACITY_LITRES;
+      updateUsageUI(simState.usageToday);
+
+      // Auto start trigger at lowThr (20%) in AUTO mode, never above 25%.
+      if (simState.mode === "AUTO" && simState.level <= LOW_LEVEL_THRESHOLD && simState.level <= AUTO_START_MAX_LEVEL) {
         updatePumpUI("ON");
         simState.pumpState = "ON";
-        injectAlert("INFO", "Refilling Triggered", "Water level below start threshold (30%). Starting motor.");
+        injectAlert("INFO", "Refilling Triggered", `Water level below start threshold (${LOW_LEVEL_THRESHOLD}%). Starting motor.`);
       }
     }
-    
+
     updateLevelUI(simState.level);
-    
+
     // 3. Periodic Leak Simulator checks
     if (simState.pumpState === "OFF") {
       // Small chance of showing leak behavior
@@ -1341,11 +1433,11 @@ function startSimulationLoop() {
 }
 
 function simulateAutoState() {
-  if (simState.level <= 30 && simState.pumpState === "OFF") {
+  if (simState.level <= LOW_LEVEL_THRESHOLD && simState.level <= AUTO_START_MAX_LEVEL && simState.pumpState === "OFF") {
     simState.pumpState = "ON";
     updatePumpUI("ON");
     injectAlert("INFO", "Auto-Mode Start", "AUTO FSM engaged. Low level threshold active.");
-  } else if (simState.level >= 90 && simState.pumpState === "ON") {
+  } else if (simState.level >= HIGH_LEVEL_THRESHOLD && simState.pumpState === "ON") {
     simState.pumpState = "OFF";
     updatePumpUI("OFF");
   }
@@ -1357,4 +1449,92 @@ function stopSimulation() {
     simulationInterval = null;
   }
   simulated = false;
+}
+function initializeUsageHistory() {
+  const trigger = document.getElementById("calendar-trigger-btn");
+  const picker = document.getElementById("usage-date-picker");
+
+  if (trigger && picker) {
+    trigger.addEventListener("click", () => {
+      picker.showPicker(); // Modern browser standard
+    });
+
+    picker.addEventListener("change", (e) => {
+      if (e.target.value) {
+        switchUsageDate(e.target.value);
+      }
+    });
+
+    // Set max date to today
+    picker.max = currentDateKey();
+  }
+}
+/**
+ * Pro Feature: Interactive Voice Alerts
+ */
+function speakMessage(text) {
+  if (!window.speechSynthesis) return;
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.rate = 0.95; // Slightly slower for clarity
+  utterance.pitch = 1.0;
+  window.speechSynthesis.speak(utterance);
+}
+
+/**
+ * Pro Feature: CSV Data Export Engine
+ */
+function exportUsageHistoryCSV() {
+  if (Object.keys(usageHistory).length === 0) {
+    alert("No usage history available to export.");
+    return;
+  }
+
+  let csvContent = "Date,Hour,Usage (Litres)\n";
+
+  // Sort dates chronologically
+  const sortedDates = Object.keys(usageHistory).sort();
+
+  sortedDates.forEach(date => {
+    const day = usageHistory[date];
+    if (day && Array.isArray(day.hourly)) {
+      day.hourly.forEach((val, hr) => {
+        csvContent += `${date},${hr.toString().padStart(2, '0')}:00,${val}\n`;
+      });
+    }
+  });
+
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.setAttribute("href", url);
+  link.setAttribute("download", `spider_water_usage_${currentDateKey()}.csv`);
+  link.style.visibility = 'hidden';
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+}
+
+/**
+ * Pro Feature: Advanced FSM Visualizer
+ */
+function updateFsmVisualizer(state) {
+  // Clear all nodes
+  document.querySelectorAll(".fsm-node").forEach(node => {
+    node.classList.remove("active-state");
+  });
+
+  // Map incoming states to nodes
+  let nodeId = "";
+  const s = (state || "").toUpperCase();
+
+  if (s.includes("IDLE") || s.includes("STANDBY")) nodeId = "fsm-node-IDLE";
+  else if (s.includes("FILL") || s.includes("PUMP")) nodeId = "fsm-node-FILLING";
+  else if (s.includes("FAULT") || s.includes("ERROR") || s.includes("CRIT")) nodeId = "fsm-node-FAULT";
+  else if (s.includes("REBOOT") || s.includes("START")) nodeId = "fsm-node-REBOOT";
+  else if (s.includes("MANUAL") || s.includes("OVERRIDE") || s.includes("MAINT")) nodeId = "fsm-node-OVERRIDE";
+
+  const activeNode = document.getElementById(nodeId);
+  if (activeNode) {
+    activeNode.classList.add("active-state");
+  }
 }
